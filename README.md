@@ -1,5 +1,5 @@
 # eventhorizon
-the root tool for the meta surveillance devices (Quest 3/3s)
+the root tool for the meta surveillance devices (Quest 3/3s). ROOT ON BOOT
 
 ## installation
 download the apk from releases and sideload
