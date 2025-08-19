@@ -1,0 +1,3 @@
+[submodule "external/cheese"]
+	path = external/cheese
+	url = https://github.com/zhuowei/cheese
