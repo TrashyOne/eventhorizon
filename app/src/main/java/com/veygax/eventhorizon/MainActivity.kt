@@ -1,18 +1,17 @@
 package com.veygax.eventhorizon
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -20,25 +19,26 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.scottyab.rootbeer.RootBeer
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.InputStream
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.nio.charset.StandardCharsets
 
 class MainActivity : ComponentActivity() {
 
+    @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         setContent {
             MaterialTheme {
-                EventHorizonApp()
+                EventHorizonApp(autoRootOnStart = intent?.getBooleanExtra("auto_root", false) ?: false)
             }
         }
     }
@@ -59,9 +59,10 @@ class MainActivity : ComponentActivity() {
         return getVersionIncremental() > lastVersion
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun EventHorizonApp() {
+    fun EventHorizonApp(autoRootOnStart: Boolean) {
         val context = LocalContext.current
         val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
         
@@ -69,8 +70,25 @@ class MainActivity : ComponentActivity() {
         var consoleText by remember { mutableStateOf("") }
         val scrollState = rememberScrollState()
         var isProcessRunning by remember { mutableStateOf(false) }
+        var autoTriggered by remember { mutableStateOf(false) }
         
         val isDevicePatched = remember { isPatched() }
+
+        // Auto-root when launched from boot if enabled and not already rooted
+        LaunchedEffect(autoRootOnStart, rootOnBoot) {
+            if (!autoTriggered && autoRootOnStart && rootOnBoot && !isProcessRunning) {
+                val rootBeer = RootBeer(context)
+                if (!rootBeer.isRooted) {
+                    executeExploit(
+                        context,
+                        onOutput = { line -> consoleText += line + "\n" },
+                        onProcessComplete = { isProcessRunning = false }
+                    )
+                    isProcessRunning = true
+                }
+                autoTriggered = true
+            }
+        }
 
         Column(
             modifier = Modifier
@@ -203,6 +221,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     private fun executeExploit(
         context: Context, 
         onOutput: (String) -> Unit,
