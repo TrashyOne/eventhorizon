@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
             
             // Description area
             Text(
-                text = "root for the meta surveillance device",
+                text = "root for the meta surveillance device by veygax, zhuowei and freexr",
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Left,
