@@ -1,3 +1,4 @@
+![eventhorizon icon](https://github.com/veygax/eventhorizon/blob/main/app/src/main/ic_launcher-playstore.png)
 # eventhorizon
 the root tool for the meta surveillance devices (Quest 3/3s). ROOT ON BOOT
 
