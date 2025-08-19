@@ -1,0 +1,11 @@
+@echo off
+set "EXPLOIT_DIR=app\src\main\assets\exploit"
+if exist "%EXPLOIT_DIR%\magisk.apk" del "%EXPLOIT_DIR%\magisk.apk"
+if exist "%EXPLOIT_DIR%\magisk.zip" del "%EXPLOIT_DIR%\magisk.zip"
+if exist "%EXPLOIT_DIR%\busybox" del "%EXPLOIT_DIR%\busybox"
+powershell -Command "Invoke-WebRequest -Uri 'https://github.com/topjohnwu/Magisk/releases/download/v29.0/Magisk-v29.0.apk' -OutFile '%EXPLOIT_DIR%\magisk.apk'"
+ren "%EXPLOIT_DIR%\magisk.apk" "magisk.zip"
+powershell -Command "Expand-Archive -Path '%EXPLOIT_DIR%\magisk.zip' -DestinationPath '%EXPLOIT_DIR%\temp' -Force"
+move "%EXPLOIT_DIR%\temp\lib\arm64-v8a\libbusybox.so" "%EXPLOIT_DIR%\busybox"
+rmdir /s /q "%EXPLOIT_DIR%\temp"
+ren "%EXPLOIT_DIR%\magisk.zip" "magisk.apk"

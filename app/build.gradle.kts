@@ -38,21 +38,6 @@ android {
         compose = true
         viewBinding = true
     }
-    
-    packagingOptions {
-        jniLibs {
-            keepDebugSymbols += "**/*.so"
-        }
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-    
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
-        }
-    }
 }
 
 dependencies {

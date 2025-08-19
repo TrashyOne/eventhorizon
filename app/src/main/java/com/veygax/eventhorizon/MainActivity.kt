@@ -22,11 +22,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.charset.StandardCharsets
 
 class MainActivity : ComponentActivity() {
 
@@ -79,7 +82,8 @@ class MainActivity : ComponentActivity() {
                 text = "eventhorizon",
                 style = MaterialTheme.typography.headlineLarge,
                 modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Left
+                textAlign = TextAlign.Left,
+                color = MaterialTheme.colorScheme.primary
             )
             
             Spacer(modifier = Modifier.height(8.dp))
@@ -146,7 +150,7 @@ class MainActivity : ComponentActivity() {
             Button(
                 onClick = {
                     if (!isProcessRunning) {
-                        executeRootProcess(context, onOutput = { line ->
+                        executeExploit(context, onOutput = { line ->
                             consoleText += line + "\n"
                         }, onProcessComplete = {
                             isProcessRunning = false
@@ -199,7 +203,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun executeRootProcess(
+    private fun executeExploit(
         context: Context, 
         onOutput: (String) -> Unit,
         onProcessComplete: () -> Unit
@@ -232,13 +236,14 @@ class MainActivity : ComponentActivity() {
                     .redirectErrorStream(true)
                 val process = processBuilder.start()
 
-                // Read process output
-                process.inputStream.bufferedReader().use { reader ->
-                    reader.lineSequence().forEach { line ->
-                        launch(Dispatchers.Main) {
-                            onOutput(line)
+                // Read process output concurrently, line by line
+                launch {
+                    process.inputStream.toLineFlow()
+                        .collect { line ->
+                            launch(Dispatchers.Main) {
+                                onOutput(line)
+                            }
                         }
-                    }
                 }
                 
                 process.waitFor()
@@ -256,11 +261,8 @@ class MainActivity : ComponentActivity() {
     }
 
     // Extension function to convert InputStream to line flow
-    private fun InputStream.toLineFlow() = flow {
-        bufferedReader().use { reader ->
-            reader.lineSequence().forEach { line ->
-                emit(line)
-            }
-        }
-    }
+    private fun InputStream.toLineFlow() = bufferedReader(StandardCharsets.UTF_8)
+        .lineSequence()
+        .asFlow()
+        .onCompletion { close() }
 }
