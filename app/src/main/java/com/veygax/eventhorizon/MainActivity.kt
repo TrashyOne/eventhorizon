@@ -1,59 +1,266 @@
 package com.veygax.eventhorizon
 
+import android.content.Context
+import android.content.SharedPreferences
+import android.os.Build
 import android.os.Bundle
-import com.google.android.material.snackbar.Snackbar
-import androidx.appcompat.app.AppCompatActivity
-import androidx.navigation.findNavController
-import androidx.navigation.ui.AppBarConfiguration
-import androidx.navigation.ui.navigateUp
-import androidx.navigation.ui.setupActionBarWithNavController
-import android.view.Menu
-import android.view.MenuItem
-import com.veygax.eventhorizon.databinding.ActivityMainBinding
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
-class MainActivity : AppCompatActivity() {
-
-    private lateinit var appBarConfiguration: AppBarConfiguration
-    private lateinit var binding: ActivityMainBinding
+class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
-        setSupportActionBar(binding.toolbar)
-
-        val navController = findNavController(R.id.nav_host_fragment_content_main)
-        appBarConfiguration = AppBarConfiguration(navController.graph)
-        setupActionBarWithNavController(navController, appBarConfiguration)
-
-        binding.fab.setOnClickListener { view ->
-            Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-                .setAction("Action", null)
-                .setAnchorView(R.id.fab).show()
+        
+        setContent {
+            MaterialTheme {
+                EventHorizonApp()
+            }
         }
     }
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        menuInflater.inflate(R.menu.menu_main, menu)
-        return true
+    private fun lastVersionForDevice(): Long = when(Build.BOARD) {
+        "eureka" -> 51154110129000520L
+        "panther" -> 1176880099000610L
+        else -> 0
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        return when (item.itemId) {
-            R.id.action_settings -> true
-            else -> super.onOptionsItemSelected(item)
+    private fun getVersionIncremental() = Build.VERSION.INCREMENTAL.toLong()
+
+    private fun isPatched(): Boolean {
+        val lastVersion = lastVersionForDevice()
+        if (lastVersion == 0L) {
+            return false // you're on your own
+        }
+        return getVersionIncremental() > lastVersion
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun EventHorizonApp() {
+        val context = LocalContext.current
+        val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
+        
+        var rootOnBoot by remember { mutableStateOf(sharedPrefs.getBoolean("root_on_boot", false)) }
+        var consoleText by remember { mutableStateOf("") }
+        val scrollState = rememberScrollState()
+        var isProcessRunning by remember { mutableStateOf(false) }
+        
+        val isDevicePatched = remember { isPatched() }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Title Bar
+            Text(
+                text = "eventhorizon",
+                style = MaterialTheme.typography.headlineLarge,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Left
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Description area
+            Text(
+                text = "root for the meta surveillance device",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Left,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Boot behavior card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    rootOnBoot = !rootOnBoot
+                    sharedPrefs.edit().putBoolean("root_on_boot", rootOnBoot).apply()
+                }
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = if (rootOnBoot) "will root on startup, click to change" else "will not root on startup, click to change",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Patched device warning card (only show if patched)
+            if (isDevicePatched) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "⚠️ exploit patched on this device",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = "the exploit will NOT work.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            
+            // Root button
+            Button(
+                onClick = {
+                    if (!isProcessRunning) {
+                        executeRootProcess(context, onOutput = { line ->
+                            consoleText += line + "\n"
+                        }, onProcessComplete = {
+                            isProcessRunning = false
+                        })
+                        isProcessRunning = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isProcessRunning
+            ) {
+                Text(if (isProcessRunning) "rooting..." else "root now")
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Log section
+            Text(
+                text = "Log Output:",
+                style = MaterialTheme.typography.titleMedium
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Log display
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = if (consoleText.isEmpty()) "no output yet..." else consoleText,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                            .verticalScroll(scrollState),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            
+            // Auto-scroll to bottom when new content is added
+            LaunchedEffect(consoleText) {
+                if (consoleText.isNotEmpty()) {
+                    scrollState.animateScrollTo(scrollState.maxValue)
+                }
+            }
         }
     }
 
-    override fun onSupportNavigateUp(): Boolean {
-        val navController = findNavController(R.id.nav_host_fragment_content_main)
-        return navController.navigateUp(appBarConfiguration)
-                || super.onSupportNavigateUp()
+    private fun executeRootProcess(
+        context: Context, 
+        onOutput: (String) -> Unit,
+        onProcessComplete: () -> Unit
+    ) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val assetManager = assets
+                val extractedDir = getDir("exploit", 0)
+                
+                // Extract assets
+                for (filename in assetManager.list("exploit")!!) {
+                    val targetFile = File(extractedDir, filename)
+                    if (targetFile.exists()) {
+                        continue
+                    }
+                    assetManager.open("exploit/$filename").use { inputStream ->
+                        Files.copy(
+                            inputStream, 
+                            targetFile.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
+                        targetFile.setExecutable(true)
+                    }
+                }
+                
+                val executablePath = applicationInfo.nativeLibraryDir + "/libexploit.so"
+                val launchShPath = File(extractedDir, "launch.sh").path
+                val processBuilder = ProcessBuilder()
+                    .command(executablePath, "sh", launchShPath)
+                    .redirectErrorStream(true)
+                val process = processBuilder.start()
+
+                // Read process output
+                process.inputStream.bufferedReader().use { reader ->
+                    reader.lineSequence().forEach { line ->
+                        launch(Dispatchers.Main) {
+                            onOutput(line)
+                        }
+                    }
+                }
+                
+                process.waitFor()
+                
+            } catch (e: Exception) {
+                launch(Dispatchers.Main) {
+                    onOutput("Error: ${e.message}")
+                }
+            } finally {
+                launch(Dispatchers.Main) {
+                    onProcessComplete()
+                }
+            }
+        }
+    }
+
+    // Extension function to convert InputStream to line flow
+    private fun InputStream.toLineFlow() = flow {
+        bufferedReader().use { reader ->
+            reader.lineSequence().forEach { line ->
+                emit(line)
+            }
+        }
     }
 }

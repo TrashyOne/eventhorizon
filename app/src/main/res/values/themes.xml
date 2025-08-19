@@ -1,8 +1,10 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Base.Theme.Eventhorizon" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Base.Theme.Eventhorizon" parent="Theme.Material3.Light">
         <!-- Customize your light theme here. -->
         <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
     </style>
 
     <style name="Theme.Eventhorizon" parent="Base.Theme.Eventhorizon" />
