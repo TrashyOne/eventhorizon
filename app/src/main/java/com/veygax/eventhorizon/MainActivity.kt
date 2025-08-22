@@ -9,6 +9,8 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Power
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -128,23 +130,28 @@ class MainActivity : ComponentActivity() {
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            // Boot behavior card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    rootOnBoot = !rootOnBoot
-                    sharedPrefs.edit().putBoolean("root_on_boot", rootOnBoot).apply()
-                }
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Text(
-                        text = if (rootOnBoot) "will root on startup, click to change" else "will not root on startup, click to change",
-                        style = MaterialTheme.typography.bodyLarge
+            // root on boot toggle
+           ListItem(
+                headlineContent = { Text("root on boot") },
+                supportingContent = {
+                    Text(if (rootOnBoot) "will root on startup" else "will not root on startup")
+                },
+                leadingContent = {
+                    Icon(
+                        imageVector = Icons.Filled.Power,
+                        contentDescription = "Power"
+                    )
+                },
+                trailingContent = {
+                    Switch(
+                        checked = rootOnBoot,
+                        onCheckedChange = { checked ->
+                            rootOnBoot = checked
+                            sharedPrefs.edit().putBoolean("root_on_boot", checked).apply()
+                        }
                     )
                 }
-            }
+            )
             
             Spacer(modifier = Modifier.height(12.dp))
             
