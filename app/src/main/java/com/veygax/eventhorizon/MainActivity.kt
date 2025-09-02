@@ -250,9 +250,6 @@ class MainActivity : ComponentActivity() {
                 // Extract assets
                 for (filename in assetManager.list("exploit")!!) {
                     val targetFile = File(extractedDir, filename)
-                    if (targetFile.exists()) {
-                        continue
-                    }
                     assetManager.open("exploit/$filename").use { inputStream ->
                         Files.copy(
                             inputStream, 
