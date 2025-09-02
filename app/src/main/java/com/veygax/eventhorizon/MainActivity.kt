@@ -87,18 +87,15 @@ class MainActivity : ComponentActivity() {
         
         val isDevicePatched = remember { isPatched() }
 
-        // Auto-root when launched from boot if enabled and not already rooted
-        LaunchedEffect(autoRootOnStart, rootOnBoot) {
-            if (!autoTriggered && autoRootOnStart && rootOnBoot && !isProcessRunning) {
-                val rootBeer = RootBeer(context)
-                if (!rootBeer.isRooted) {
-                    executeExploit(
-                        context,
-                        onOutput = { line -> consoleText += line + "\n" },
-                        onProcessComplete = { isProcessRunning = false }
-                    )
-                    isProcessRunning = true
-                }
+        // Auto-root when launched with auto_root parameter
+        LaunchedEffect(autoRootOnStart) {
+            if (!autoTriggered && autoRootOnStart && !isProcessRunning) {
+                executeExploit(
+                    context,
+                    onOutput = { line -> consoleText += line + "\n" },
+                    onProcessComplete = { isProcessRunning = false }
+                )
+                isProcessRunning = true
                 autoTriggered = true
             }
         }
