@@ -1,6 +1,7 @@
 package com.veygax.eventhorizon
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,7 +11,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -22,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.veygax.eventhorizon.RootUtils
 import com.scottyab.rootbeer.RootBeer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.asFlow
@@ -84,8 +88,14 @@ class MainActivity : ComponentActivity() {
         val scrollState = rememberScrollState()
         var isProcessRunning by remember { mutableStateOf(false) }
         var autoTriggered by remember { mutableStateOf(false) }
+        var isRooted by remember { mutableStateOf(false) }
         
         val isDevicePatched = remember { isPatched() }
+
+        // Check for root access when the app launches
+        LaunchedEffect(Unit) {
+            isRooted = RootUtils.isRootAvailable()
+        }
 
         // Auto-root when launched with auto_root parameter
         LaunchedEffect(autoRootOnStart) {
@@ -127,11 +137,26 @@ class MainActivity : ComponentActivity() {
             
             Spacer(modifier = Modifier.height(24.dp))
             
+            // Root Status Indicator
+            ListItem(
+                headlineContent = { Text("Root Status") },
+                supportingContent = {
+                    Text(if (isRooted) "Root Access Granted" else "Root not available")
+                },
+                leadingContent = {
+                    Icon(
+                        imageVector = if (isRooted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                        contentDescription = "Root Status Icon",
+                        tint = if (isRooted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                }
+            )
+
             // root on boot toggle
            ListItem(
-                headlineContent = { Text("root on boot") },
+                headlineContent = { Text("Root on Boot") },
                 supportingContent = {
-                    Text(if (rootOnBoot) "will root on startup" else "will not root on startup")
+                    Text(if (rootOnBoot) "Root on Startup" else "Won't Root on Startup")
                 },
                 leadingContent = {
                     Icon(
@@ -194,9 +219,23 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isProcessRunning
             ) {
-                Text(if (isProcessRunning) "rooting..." else "root now")
+                Text(if (isProcessRunning) "rooting..." else "Root Now")
             }
             
+            // AIO Tweaks button - only shown if rooted
+            if (isRooted) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val intent = Intent(context, TweaksActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("AIO Tweaks")
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
             
             // Log section
