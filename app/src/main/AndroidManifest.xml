@@ -42,6 +42,12 @@
             android:label="Install Apps"
             android:theme="@style/Theme.Eventhorizon" />
 
+        <activity
+            android:name=".LedColorActivity"
+            android:exported="false"
+            android:label="Custom LED Color"
+            android:theme="@style/Theme.Eventhorizon" />
+
         <service
             android:name=".DnsBlockerService"
             android:exported="false"

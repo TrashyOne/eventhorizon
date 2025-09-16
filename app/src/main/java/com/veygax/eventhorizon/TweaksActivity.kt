@@ -106,7 +106,6 @@ fun TweaksScreen(
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
-    // --- State for the UI ---
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
     var isRgbExecuting by remember { mutableStateOf(false) }
     var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
@@ -120,12 +119,12 @@ fun TweaksScreen(
     var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
 
 
-    // This effect runs whenever the screen is resumed to get the latest service status
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isBlockerEnabled = isDnsServiceRunning()
+                runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -136,14 +135,15 @@ fun TweaksScreen(
 
 
     LaunchedEffect(isRooted) {
-        isBlockerEnabled = isDnsServiceRunning() // Also check on initial composition
+        isBlockerEnabled = isDnsServiceRunning()
         if (isRooted) {
-            val pid = RootUtils.runAsRoot("pgrep -f ${scriptFile.name}")
-            isRgbExecuting = pid.trim().toIntOrNull() != null
+            // Check if either of the LED scripts are running
+            val runningScript = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
+            isRgbExecuting = runningScript.trim().toIntOrNull() != null
 
             val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
             uiSwitchState = if (uiStateValue.contains(": 1")) 1 else 0
-            
+
             val transitionValue = RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled")
             isVoidTransitionEnabled = transitionValue.contains(": false")
 
@@ -185,32 +185,58 @@ fun TweaksScreen(
                                 checked = runOnBoot,
                                 onCheckedChange = { checked ->
                                     runOnBoot = checked
-                                    sharedPrefs.edit().putBoolean("rgb_on_boot", checked).apply()
-                                    coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "RGB on Boot Enabled" else "RGB on Boot Disabled") }
+                                    val editor = sharedPrefs.edit()
+                                    editor.putBoolean("rgb_on_boot", checked)
+                                    if (checked) {
+                                        editor.putBoolean("custom_led_on_boot", false)
+                                    }
+                                    editor.apply()
+                                    coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Rainbow LED on Boot Enabled" else "Rainbow LED on Boot Disabled") }
                                 },
                                 enabled = isRooted
                             )
                         }
                         Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                coroutineScope.launch {
-                                    if (isRgbExecuting) {
-                                        isRgbExecuting = false
-                                        RootUtils.runAsRoot("pkill -f ${scriptFile.name}")
-                                        RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
-                                        snackbarHostState.showSnackbar("RGB script stopped.")
-                                    } else {
-                                        isRgbExecuting = true
-                                        scriptFile.writeText(TweakCommands.RGB_SCRIPT)
-                                        RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-                                        RootUtils.runAsRoot("${scriptFile.absolutePath} &")
-                                        snackbarHostState.showSnackbar("RGB script started.")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        sharedPrefs.edit().putBoolean("custom_led_active", false).apply()
+                                        if (isRgbExecuting) {
+                                            isRgbExecuting = false
+                                            RootUtils.runAsRoot("pkill -f rgb_led.sh || pkill -f custom_led.sh")
+                                            RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+                                            snackbarHostState.showSnackbar("All LED scripts stopped.")
+                                        } else {
+                                            isRgbExecuting = true
+                                            RootUtils.runAsRoot("pkill -f custom_led.sh") // Stop custom script
+                                            scriptFile.writeText(TweakCommands.RGB_SCRIPT)
+                                            RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
+                                            RootUtils.runAsRoot("${scriptFile.absolutePath} &")
+                                            snackbarHostState.showSnackbar("Rainbow script started.")
+                                        }
                                     }
-                                }
-                            },
-                            enabled = isRooted
-                        ) { Text(if (isRgbExecuting) "Stop" else "Start") }
+                                },
+                                enabled = isRooted
+                            ) { Text(if (isRgbExecuting) "Stop" else "Start") }
+
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        if (isRgbExecuting) {
+                                            isRgbExecuting = false
+                                            RootUtils.runAsRoot("pkill -f rgb_led.sh || pkill -f custom_led.sh")
+                                            RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+                                        }
+                                        val intent = Intent(context, LedColorActivity::class.java)
+                                        context.startActivity(intent)
+                                    }
+                                },
+                                enabled = isRooted
+                            ) {
+                                Text("Custom")
+                            }
+                        }
                     }
                 }
             }
@@ -366,6 +392,8 @@ object TweakCommands {
     const val LEDS_OFF = "echo 0 > /sys/class/leds/red/brightness\necho 0 > /sys/class/leds/green/brightness\necho 0 > /sys/class/leds/blue/brightness"
     val RGB_SCRIPT = """
 #!/system/bin/sh
+pkill -f custom_led.sh
+
 RED_LED="/sys/class/leds/red/brightness"
 GREEN_LED="/sys/class/leds/green/brightness"
 BLUE_LED="/sys/class/leds/blue/brightness"
