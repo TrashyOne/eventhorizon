@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
@@ -33,6 +34,12 @@
             android:name=".TweaksActivity"
             android:exported="false"
             android:label="AIO Tweaks"
+            android:theme="@style/Theme.Eventhorizon" />
+
+        <activity
+            android:name=".AppsActivity"
+            android:exported="false"
+            android:label="Install Apps"
             android:theme="@style/Theme.Eventhorizon" />
 
         <receiver

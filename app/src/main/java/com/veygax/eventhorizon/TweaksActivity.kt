@@ -54,12 +54,8 @@ fun TweaksScreen() {
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
     // --- State for the UI ---
-    var showRestartDialog by remember { mutableStateOf(false) }
-    var restartDialogContent by remember { mutableStateOf<Pair<String, () -> Unit>>(Pair("", {})) }
-
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
     var isRgbExecuting by remember { mutableStateOf(false) }
-    var isDogfoodEnabled by rememberSaveable { mutableStateOf(false) }
 
     // State variables to be populated by device checks
     var uiSwitchState by rememberSaveable { mutableStateOf(0) } // 0=Dock, 1=Navigator
@@ -74,10 +70,6 @@ fun TweaksScreen() {
     LaunchedEffect(Unit) {
         val pid = RootUtils.runAsRoot("pgrep -f ${scriptFile.name}")
         isRgbExecuting = pid.trim().toIntOrNull() != null
-
-        // Check Dogfood Hub status
-        val buildType = RootUtils.runAsRoot("getprop ro.build.type")
-        isDogfoodEnabled = buildType.trim() == "userdebug"
 
         // Check UI Mode (Navigator vs Dock)
         val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
@@ -102,22 +94,6 @@ fun TweaksScreen() {
         // Check Infinite Panels
         val infinitePanelsValue = RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled")
         isInfinitePanelsEnabled = infinitePanelsValue.contains(": true")
-
-        // Check for Dogfood Hub setup step 2
-        if (sharedPrefs.getBoolean("dogfood_pending_step2", false)) {
-            sharedPrefs.edit().remove("dogfood_pending_step2").apply()
-            RootUtils.runAsRoot(TweakCommands.ENABLE_DOGFOOD_STEP_2)
-        }
-    }
-
-    if (showRestartDialog) {
-        AlertDialog(
-            onDismissRequest = { showRestartDialog = false },
-            title = { Text("Restart Required") },
-            text = { Text(restartDialogContent.first) },
-            confirmButton = { Button(onClick = { restartDialogContent.second(); showRestartDialog = false }) { Text("Confirm") } },
-            dismissButton = { Button(onClick = { showRestartDialog = false }) { Text("Cancel") } }
-        )
     }
 
     Scaffold(
@@ -243,32 +219,6 @@ fun TweaksScreen() {
                             snackbarHostState.showSnackbar(if (isEnabled) "Infinite Panels Enabled." else "Infinite Panels Disabled.")
                         }
                     })
-                }
-            }
-            item {
-                TweakCard("Dogfood Hub", "Enables Dogfood Hub") {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Switch(checked = isDogfoodEnabled, onCheckedChange = { isEnabled ->
-                            restartDialogContent = if (isEnabled) {
-                                Pair("This will restart your device's interface. After it reloads, please open this app again to complete the second step automatically.") {
-                                    coroutineScope.launch {
-                                        sharedPrefs.edit().putBoolean("dogfood_pending_step2", true).apply()
-                                        RootUtils.runAsRoot(TweakCommands.ENABLE_DOGFOOD_STEP_1)
-                                    }
-                                }
-                            } else {
-                                Pair("This will disable the Dogfood Hub and restart your device's interface.") {
-                                    coroutineScope.launch { RootUtils.runAsRoot(TweakCommands.DISABLE_DOGFOOD_HUB) }
-                                }
-                            }
-                            showRestartDialog = true
-                        })
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { coroutineScope.launch { RootUtils.runAsRoot(TweakCommands.LAUNCH_DOGFOOD_HUB) } },
-                            enabled = isDogfoodEnabled
-                        ) { Text("Launch") }
-                    }
                 }
             }
         }

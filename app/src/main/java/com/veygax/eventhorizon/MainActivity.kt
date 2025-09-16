@@ -222,17 +222,31 @@ class MainActivity : ComponentActivity() {
                 Text(if (isProcessRunning) "rooting..." else "Root Now")
             }
             
-            // AIO Tweaks button - only shown if rooted
+            // AIO Tweaks and Install Apps buttons - only shown if rooted
             if (isRooted) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        val intent = Intent(context, TweaksActivity::class.java)
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("AIO Tweaks")
+                    Button(
+                        onClick = {
+                            val intent = Intent(context, TweaksActivity::class.java)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("AIO Tweaks")
+                    }
+                    Button(
+                        onClick = {
+                            val intent = Intent(context, AppsActivity::class.java)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Apps")
+                    }
                 }
             }
 
