@@ -31,11 +31,21 @@ import java.io.File
 
 class TweaksActivity : ComponentActivity() {
 
+    var isRgbExecutingState = mutableStateOf(false)
+
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             startDnsService()
+        }
+    }
+    
+    private val ledColorLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            isRgbExecutingState.value = true
         }
     }
 
@@ -56,6 +66,10 @@ class TweaksActivity : ComponentActivity() {
         } else {
             startDnsService()
         }
+    }
+    
+    fun launchCustomColorPicker() {
+        ledColorLauncher.launch(Intent(this, LedColorActivity::class.java))
     }
 
     private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
@@ -106,8 +120,9 @@ fun TweaksScreen(
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
+    var isRgbExecuting by activity.isRgbExecutingState
+    
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
-    var isRgbExecuting by remember { mutableStateOf(false) }
     var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
     var isBlockerEnabled by remember { mutableStateOf(false) }
 
@@ -125,6 +140,12 @@ fun TweaksScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 isBlockerEnabled = isDnsServiceRunning()
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
+                if (isRooted) {
+                    coroutineScope.launch {
+                        val runningScript = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
+                        isRgbExecuting = runningScript.trim().toIntOrNull() != null
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -137,13 +158,12 @@ fun TweaksScreen(
     LaunchedEffect(isRooted) {
         isBlockerEnabled = isDnsServiceRunning()
         if (isRooted) {
-            // Check if either of the LED scripts are running
             val runningScript = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
             isRgbExecuting = runningScript.trim().toIntOrNull() != null
 
             val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
             uiSwitchState = if (uiStateValue.contains(": 1")) 1 else 0
-
+            
             val transitionValue = RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled")
             isVoidTransitionEnabled = transitionValue.contains(": false")
 
@@ -209,7 +229,7 @@ fun TweaksScreen(
                                             snackbarHostState.showSnackbar("All LED scripts stopped.")
                                         } else {
                                             isRgbExecuting = true
-                                            RootUtils.runAsRoot("pkill -f custom_led.sh") // Stop custom script
+                                            RootUtils.runAsRoot("pkill -f custom_led.sh || true")
                                             scriptFile.writeText(TweakCommands.RGB_SCRIPT)
                                             RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
                                             RootUtils.runAsRoot("${scriptFile.absolutePath} &")
@@ -228,8 +248,7 @@ fun TweaksScreen(
                                             RootUtils.runAsRoot("pkill -f rgb_led.sh || pkill -f custom_led.sh")
                                             RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
                                         }
-                                        val intent = Intent(context, LedColorActivity::class.java)
-                                        context.startActivity(intent)
+                                        activity.launchCustomColorPicker()
                                     }
                                 },
                                 enabled = isRooted
@@ -392,7 +411,6 @@ object TweakCommands {
     const val LEDS_OFF = "echo 0 > /sys/class/leds/red/brightness\necho 0 > /sys/class/leds/green/brightness\necho 0 > /sys/class/leds/blue/brightness"
     val RGB_SCRIPT = """
 #!/system/bin/sh
-pkill -f custom_led.sh
 
 RED_LED="/sys/class/leds/red/brightness"
 GREEN_LED="/sys/class/leds/green/brightness"

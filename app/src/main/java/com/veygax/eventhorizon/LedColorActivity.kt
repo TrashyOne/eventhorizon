@@ -2,6 +2,7 @@ package com.veygax.eventhorizon
 
 import android.app.Activity
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -28,7 +29,15 @@ class LedColorActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            val useDarkTheme = isSystemInDarkTheme()
+            val colorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val ctx = LocalContext.current
+                if (useDarkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            } else {
+                if (useDarkTheme) darkColorScheme() else lightColorScheme()
+            }
+
+            MaterialTheme(colorScheme = colorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     LedColorScreen()
                 }
@@ -76,7 +85,11 @@ fun LedColorScreen() {
                     IconButton(onClick = { activity?.finish() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             )
         }
     ) { innerPadding ->
@@ -124,11 +137,10 @@ fun LedColorScreen() {
                             .putInt("led_blue", blue.toInt())
                             .putBoolean("custom_led_active", true)
                             .apply()
-
+                        
                         val customColorScript = """
                             #!/system/bin/sh
-                            pkill -f rgb_led.sh
-                            
+
                             RED_LED="/sys/class/leds/red/brightness"
                             GREEN_LED="/sys/class/leds/green/brightness"
                             BLUE_LED="/sys/class/leds/blue/brightness"
@@ -142,11 +154,16 @@ fun LedColorScreen() {
                         """.trimIndent()
 
                         scriptFile.writeText(customColorScript)
+                        // Kill any other running LED scripts before starting new one
+                        RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
+                        RootUtils.runAsRoot("pkill -f custom_led.sh || true")
                         RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-                        RootUtils.runAsRoot("pkill -f custom_led.sh")
                         RootUtils.runAsRoot("${scriptFile.absolutePath} &")
 
                         snackbarHostState.showSnackbar("Custom color set!")
+                        
+                        activity?.setResult(Activity.RESULT_OK)
+                        activity?.finish()
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
