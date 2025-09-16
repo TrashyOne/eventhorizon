@@ -1,11 +1,15 @@
 package com.veygax.eventhorizon
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
+import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,14 +21,56 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
 import java.io.File
 
 class TweaksActivity : ComponentActivity() {
+
+    private val vpnPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            startDnsService()
+        }
+    }
+
+    fun startDnsService() {
+        val intent = Intent(this, DnsBlockerService::class.java).setAction(DnsBlockerService.ACTION_START)
+        startService(intent)
+    }
+
+    fun stopDnsService() {
+        val intent = Intent(this, DnsBlockerService::class.java).setAction(DnsBlockerService.ACTION_STOP)
+        startService(intent)
+    }
+
+    fun requestVpnPermission() {
+        val intent = VpnService.prepare(this)
+        if (intent != null) {
+            vpnPermissionLauncher.launch(intent)
+        } else {
+            startDnsService()
+        }
+    }
+
+    private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        for (service in manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.name == service.service.className) {
+                return true
+            }
+        }
+        return false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val isRooted = intent.getBooleanExtra("is_rooted", false)
         setContent {
             val useDarkTheme = isSystemInDarkTheme()
             val colorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -36,7 +82,11 @@ class TweaksActivity : ComponentActivity() {
 
             MaterialTheme(colorScheme = colorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    TweaksScreen()
+                    TweaksScreen(
+                        activity = this,
+                        isRooted = isRooted,
+                        isDnsServiceRunning = { isServiceRunning(this, DnsBlockerService::class.java) }
+                    )
                 }
             }
         }
@@ -45,20 +95,24 @@ class TweaksActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TweaksScreen() {
+fun TweaksScreen(
+    activity: TweaksActivity,
+    isRooted: Boolean,
+    isDnsServiceRunning: () -> Boolean
+) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
-    val activity = LocalContext.current as? Activity
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
     // --- State for the UI ---
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
     var isRgbExecuting by remember { mutableStateOf(false) }
+    var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
+    var isBlockerEnabled by remember { mutableStateOf(false) }
 
-    // State variables to be populated by device checks
-    var uiSwitchState by rememberSaveable { mutableStateOf(0) } // 0=Dock, 1=Navigator
+    var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
     var isTeleportLimitDisabled by rememberSaveable { mutableStateOf(false) }
     var isNavigatorFogEnabled by rememberSaveable { mutableStateOf(false) }
@@ -66,34 +120,45 @@ fun TweaksScreen() {
     var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
 
 
-    // This effect runs once to get the initial state of all tweaks
-    LaunchedEffect(Unit) {
-        val pid = RootUtils.runAsRoot("pgrep -f ${scriptFile.name}")
-        isRgbExecuting = pid.trim().toIntOrNull() != null
+    // This effect runs whenever the screen is resumed to get the latest service status
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isBlockerEnabled = isDnsServiceRunning()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
-        // Check UI Mode (Navigator vs Dock)
-        val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
-        uiSwitchState = if (uiStateValue.contains(": 1")) 1 else 0
 
-        // Check Transition Mode (Void vs Immersive)
-        val transitionValue = RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled")
-        isVoidTransitionEnabled = transitionValue.contains(": false") // Void is ON when immersive is OFF
+    LaunchedEffect(isRooted) {
+        isBlockerEnabled = isDnsServiceRunning() // Also check on initial composition
+        if (isRooted) {
+            val pid = RootUtils.runAsRoot("pgrep -f ${scriptFile.name}")
+            isRgbExecuting = pid.trim().toIntOrNull() != null
 
-        // Check Teleport Limit
-        val teleportValue = RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere")
-        isTeleportLimitDisabled = teleportValue.contains(": true")
+            val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
+            uiSwitchState = if (uiStateValue.contains(": 1")) 1 else 0
+            
+            val transitionValue = RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled")
+            isVoidTransitionEnabled = transitionValue.contains(": false")
 
-        // Check Navigator Fog
-        val fogValue = RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled")
-        isNavigatorFogEnabled = fogValue.contains(": false") // Fog is ON when disabled is OFF
+            val teleportValue = RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere")
+            isTeleportLimitDisabled = teleportValue.contains(": true")
 
-        // Check Panel Scaling
-        val panelScalingValue = RootUtils.runAsRoot("oculuspreferences --getc panel_scaling")
-        isPanelScalingEnabled = panelScalingValue.contains(": true")
+            val fogValue = RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled")
+            isNavigatorFogEnabled = fogValue.contains(": false")
 
-        // Check Infinite Panels
-        val infinitePanelsValue = RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled")
-        isInfinitePanelsEnabled = infinitePanelsValue.contains(": true")
+            val panelScalingValue = RootUtils.runAsRoot("oculuspreferences --getc panel_scaling")
+            isPanelScalingEnabled = panelScalingValue.contains(": true")
+
+            val infinitePanelsValue = RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled")
+            isInfinitePanelsEnabled = infinitePanelsValue.contains(": true")
+        }
     }
 
     Scaffold(
@@ -101,7 +166,7 @@ fun TweaksScreen() {
         topBar = {
             TopAppBar(
                 title = { Text("eventhorizon AIO") },
-                navigationIcon = { IconButton(onClick = { activity?.finish() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = { IconButton(onClick = { activity.finish() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -116,30 +181,64 @@ fun TweaksScreen() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
                             Spacer(Modifier.width(8.dp))
-                            Switch(checked = runOnBoot, onCheckedChange = { checked ->
-                                runOnBoot = checked
-                                sharedPrefs.edit().putBoolean("rgb_on_boot", checked).apply()
-                                coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "RGB on Boot Enabled" else "RGB on Boot Disabled") }
+                            Switch(
+                                checked = runOnBoot,
+                                onCheckedChange = { checked ->
+                                    runOnBoot = checked
+                                    sharedPrefs.edit().putBoolean("rgb_on_boot", checked).apply()
+                                    coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "RGB on Boot Enabled" else "RGB on Boot Disabled") }
+                                },
+                                enabled = isRooted
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    if (isRgbExecuting) {
+                                        isRgbExecuting = false
+                                        RootUtils.runAsRoot("pkill -f ${scriptFile.name}")
+                                        RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+                                        snackbarHostState.showSnackbar("RGB script stopped.")
+                                    } else {
+                                        isRgbExecuting = true
+                                        scriptFile.writeText(TweakCommands.RGB_SCRIPT)
+                                        RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
+                                        RootUtils.runAsRoot("${scriptFile.absolutePath} &")
+                                        snackbarHostState.showSnackbar("RGB script started.")
+                                    }
+                                }
+                            },
+                            enabled = isRooted
+                        ) { Text(if (isRgbExecuting) "Stop" else "Start") }
+                    }
+                }
+            }
+            item {
+                TweakCard("Meta Domain Blocker", "Blocks Meta/Facebook domains using a DNS filter (no root).") {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(8.dp))
+                            Switch(checked = blockerOnBoot, onCheckedChange = { checked ->
+                                blockerOnBoot = checked
+                                sharedPrefs.edit().putBoolean("blocker_on_boot", checked).apply()
+                                coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "DNS Blocker on Boot Enabled" else "DNS Blocker on Boot Disabled") }
                             })
                         }
                         Spacer(Modifier.height(8.dp))
-                        // Reverted to simple, optimistic logic
-                        Button(onClick = {
-                            coroutineScope.launch {
-                                if (isRgbExecuting) {
-                                    isRgbExecuting = false
-                                    RootUtils.runAsRoot("pkill -f ${scriptFile.name}")
-                                    RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
-                                    snackbarHostState.showSnackbar("RGB script stopped.")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = "Blocker Status", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(8.dp))
+                            Switch(checked = isBlockerEnabled, onCheckedChange = { isEnabled ->
+                                isBlockerEnabled = isEnabled
+                                if (isEnabled) {
+                                    activity.requestVpnPermission()
                                 } else {
-                                    isRgbExecuting = true
-                                    scriptFile.writeText(TweakCommands.RGB_SCRIPT)
-                                    RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-                                    RootUtils.runAsRoot("${scriptFile.absolutePath} &")
-                                    snackbarHostState.showSnackbar("RGB script started.")
+                                    activity.stopDnsService()
                                 }
-                            }
-                        }) { Text(if (isRgbExecuting) "Stop" else "Start") }
+                            })
+                        }
                     }
                 }
             }
@@ -147,14 +246,18 @@ fun TweaksScreen() {
                 TweakCard("UI Switching", "Switches between Navigator and Dock without rebooting") {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(if (uiSwitchState == 1) "Navigator UI" else "Dock UI", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = uiSwitchState == 1, onCheckedChange = { isNavigator ->
-                            uiSwitchState = if (isNavigator) 1 else 0
-                            coroutineScope.launch {
-                                val command = if (isNavigator) TweakCommands.SET_UI_NAVIGATOR else TweakCommands.SET_UI_DOCK
-                                RootUtils.runAsRoot(command)
-                                snackbarHostState.showSnackbar("Switched to ${if (isNavigator) "Navigator" else "Dock"} UI.")
-                            }
-                        })
+                        Switch(
+                            checked = uiSwitchState == 1,
+                            onCheckedChange = { isNavigator ->
+                                uiSwitchState = if (isNavigator) 1 else 0
+                                coroutineScope.launch {
+                                    val command = if (isNavigator) TweakCommands.SET_UI_NAVIGATOR else TweakCommands.SET_UI_DOCK
+                                    RootUtils.runAsRoot(command)
+                                    snackbarHostState.showSnackbar("Switched to ${if (isNavigator) "Navigator" else "Dock"} UI.")
+                                }
+                            },
+                            enabled = isRooted
+                        )
                     }
                 }
             }
@@ -162,63 +265,83 @@ fun TweaksScreen() {
                 TweakCard("Void Transition", "Switches between Immersive transition and Void Transition") {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(if (isVoidTransitionEnabled) "Void Transition" else "Immersive Transition", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = isVoidTransitionEnabled, onCheckedChange = { isEnabled ->
-                            isVoidTransitionEnabled = isEnabled
-                            coroutineScope.launch {
-                                val command = if (isEnabled) TweakCommands.SET_TRANSITION_VOID else TweakCommands.SET_TRANSITION_IMMERSIVE
-                                RootUtils.runAsRoot(command)
-                                snackbarHostState.showSnackbar(if (isEnabled) "Void Transition Enabled." else "Immersive Transition Enabled.")
-                            }
-                        })
+                        Switch(
+                            checked = isVoidTransitionEnabled,
+                            onCheckedChange = { isEnabled ->
+                                isVoidTransitionEnabled = isEnabled
+                                coroutineScope.launch {
+                                    val command = if (isEnabled) TweakCommands.SET_TRANSITION_VOID else TweakCommands.SET_TRANSITION_IMMERSIVE
+                                    RootUtils.runAsRoot(command)
+                                    snackbarHostState.showSnackbar(if (isEnabled) "Void Transition Enabled." else "Immersive Transition Enabled.")
+                                }
+                            },
+                            enabled = isRooted
+                        )
                     }
                 }
             }
             item {
                 TweakCard("Teleport Anywhere", "Teleport anywhere in the home environment") {
-                    Switch(checked = isTeleportLimitDisabled, onCheckedChange = { isEnabled ->
-                        isTeleportLimitDisabled = isEnabled
-                        coroutineScope.launch {
-                            val command = if (isEnabled) TweakCommands.DISABLE_TELEPORT_LIMIT else TweakCommands.ENABLE_TELEPORT_LIMIT
-                            RootUtils.runAsRoot(command)
-                            snackbarHostState.showSnackbar(if (isEnabled) "Teleport Anywhere Enabled." else "Teleport Anywhere Disabled.")
-                        }
-                    })
+                    Switch(
+                        checked = isTeleportLimitDisabled,
+                        onCheckedChange = { isEnabled ->
+                            isTeleportLimitDisabled = isEnabled
+                            coroutineScope.launch {
+                                val command = if (isEnabled) TweakCommands.DISABLE_TELEPORT_LIMIT else TweakCommands.ENABLE_TELEPORT_LIMIT
+                                RootUtils.runAsRoot(command)
+                                snackbarHostState.showSnackbar(if (isEnabled) "Teleport Anywhere Enabled." else "Teleport Anywhere Disabled.")
+                            }
+                        },
+                        enabled = isRooted
+                    )
                 }
             }
             item {
                 TweakCard("Navigator Fog", "Enables the fog effect in the navigator background.") {
-                    Switch(checked = isNavigatorFogEnabled, onCheckedChange = { isEnabled ->
-                        isNavigatorFogEnabled = isEnabled
-                        coroutineScope.launch {
-                            val command = if (isEnabled) TweakCommands.ENABLE_NAVIGATOR_FOG else TweakCommands.DISABLE_NAVIGATOR_FOG
-                            RootUtils.runAsRoot(command)
-                            snackbarHostState.showSnackbar(if (isEnabled) "Navigator Fog Enabled." else "Navigator Fog Disabled.")
-                        }
-                    })
+                    Switch(
+                        checked = isNavigatorFogEnabled,
+                        onCheckedChange = { isEnabled ->
+                            isNavigatorFogEnabled = isEnabled
+                            coroutineScope.launch {
+                                val command = if (isEnabled) TweakCommands.ENABLE_NAVIGATOR_FOG else TweakCommands.DISABLE_NAVIGATOR_FOG
+                                RootUtils.runAsRoot(command)
+                                snackbarHostState.showSnackbar(if (isEnabled) "Navigator Fog Enabled." else "Navigator Fog Disabled.")
+                            }
+                        },
+                        enabled = isRooted
+                    )
                 }
             }
             item {
                 TweakCard("Fixed Panel Scaling", "Makes panels change size with distance.") {
-                    Switch(checked = isPanelScalingEnabled, onCheckedChange = { isEnabled ->
-                        isPanelScalingEnabled = isEnabled
-                        coroutineScope.launch {
-                            val command = if (isEnabled) TweakCommands.ENABLE_PANEL_SCALING else TweakCommands.DISABLE_PANEL_SCALING
-                            RootUtils.runAsRoot(command)
-                            snackbarHostState.showSnackbar(if (isEnabled) "Panel Scaling Enabled." else "Panel Scaling Disabled.")
-                        }
-                    })
+                    Switch(
+                        checked = isPanelScalingEnabled,
+                        onCheckedChange = { isEnabled ->
+                            isPanelScalingEnabled = isEnabled
+                            coroutineScope.launch {
+                                val command = if (isEnabled) TweakCommands.ENABLE_PANEL_SCALING else TweakCommands.DISABLE_PANEL_SCALING
+                                RootUtils.runAsRoot(command)
+                                snackbarHostState.showSnackbar(if (isEnabled) "Panel Scaling Enabled." else "Panel Scaling Disabled.")
+                            }
+                        },
+                        enabled = isRooted
+                    )
                 }
             }
             item {
                 TweakCard("Infinite Floating Panels", "Enables infinite floating panels") {
-                    Switch(checked = isInfinitePanelsEnabled, onCheckedChange = { isEnabled ->
-                        isInfinitePanelsEnabled = isEnabled
-                        coroutineScope.launch {
-                            val command = if (isEnabled) TweakCommands.ENABLE_INFINITE_PANELS else TweakCommands.DISABLE_INFINITE_PANELS
-                            RootUtils.runAsRoot(command)
-                            snackbarHostState.showSnackbar(if (isEnabled) "Infinite Panels Enabled." else "Infinite Panels Disabled.")
-                        }
-                    })
+                    Switch(
+                        checked = isInfinitePanelsEnabled,
+                        onCheckedChange = { isEnabled ->
+                            isInfinitePanelsEnabled = isEnabled
+                            coroutineScope.launch {
+                                val command = if (isEnabled) TweakCommands.ENABLE_INFINITE_PANELS else TweakCommands.DISABLE_INFINITE_PANELS
+                                RootUtils.runAsRoot(command)
+                                snackbarHostState.showSnackbar(if (isEnabled) "Infinite Panels Enabled." else "Infinite Panels Disabled.")
+                            }
+                        },
+                        enabled = isRooted
+                    )
                 }
             }
         }
@@ -255,10 +378,6 @@ while true; do
     for i in ${'$'}(seq 0 5 255); do set_rgb ${'$'}(clamp ${'$'}{i}) 0 ${'$'}(clamp ${'$'}((255 - i))); sleep 0.005; done
 done
     """.trimIndent()
-    const val ENABLE_DOGFOOD_STEP_1 = "magisk resetprop ro.build.type userdebug\nstop\nstart"
-    const val ENABLE_DOGFOOD_STEP_2 = "am broadcast -a oculus.intent.action.DC_OVERRIDE --esa config_param_value oculus_systemshell:oculus_is_trusted_user:true\nstop\nstart"
-    const val DISABLE_DOGFOOD_HUB = "magisk resetprop --delete ro.build.type\nstop\nstart"
-    const val LAUNCH_DOGFOOD_HUB = "am start com.oculus.vrshell/com.oculus.panelapp.dogfood.DogfoodMainActivity"
     const val DISABLE_TELEPORT_LIMIT = "oculuspreferences --setc shell_teleport_anywhere true"
     const val ENABLE_TELEPORT_LIMIT = "oculuspreferences --setc shell_teleport_anywhere false"
     const val ENABLE_NAVIGATOR_FOG = "oculuspreferences --setc navigator_background_disabled false\nam force-stop com.oculus.vrshell"
@@ -277,6 +396,8 @@ done
 @Composable
 fun TweaksScreenPreview() {
     MaterialTheme {
-        TweaksScreen()
+        Box(modifier=Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Preview requires Activity context.")
+        }
     }
 }

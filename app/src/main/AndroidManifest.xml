@@ -42,6 +42,17 @@
             android:label="Install Apps"
             android:theme="@style/Theme.Eventhorizon" />
 
+        <service
+            android:name=".DnsBlockerService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+                <action android:name="com.veygax.eventhorizon.START_VPN" />
+                <action android:name="com.veygax.eventhorizon.STOP_VPN" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
