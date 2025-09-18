@@ -2,6 +2,7 @@ package com.veygax.eventhorizon
 
 import android.app.Activity
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -24,7 +25,15 @@ class AppsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = if(isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            val useDarkTheme = isSystemInDarkTheme()
+            val colorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val ctx = LocalContext.current
+                if (useDarkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            } else {
+                if (useDarkTheme) darkColorScheme() else lightColorScheme()
+            }
+
+            MaterialTheme(colorScheme = colorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     AppsScreen()
                 }
