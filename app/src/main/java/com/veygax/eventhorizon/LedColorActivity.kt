@@ -159,8 +159,6 @@ fun LedColorScreen() {
                         RootUtils.runAsRoot("pkill -f custom_led.sh || true")
                         RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
                         RootUtils.runAsRoot("${scriptFile.absolutePath} &")
-
-                        snackbarHostState.showSnackbar("Custom color set!")
                         
                         activity?.setResult(Activity.RESULT_OK)
                         activity?.finish()

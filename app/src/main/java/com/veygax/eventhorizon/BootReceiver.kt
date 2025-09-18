@@ -17,6 +17,7 @@ class BootReceiver : BroadcastReceiver() {
             val blockerOnBoot = sharedPrefs.getBoolean("blocker_on_boot", false)
             val customLedOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
             val rainbowLedOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
+            val minFreqOnBoot = sharedPrefs.getBoolean("min_freq_on_boot", false)
 
             if (rootOnBoot) {
                 val rootBeer = RootBeer(context)
@@ -37,6 +38,7 @@ class BootReceiver : BroadcastReceiver() {
 
             // --- LED Boot Logic ---
             val scope = CoroutineScope(Dispatchers.IO)
+
             if (customLedOnBoot) {
                 // If custom color on boot is enabled, run its persistent script
                 scope.launch {
@@ -44,7 +46,6 @@ class BootReceiver : BroadcastReceiver() {
                     val g = sharedPrefs.getInt("led_green", 255)
                     val b = sharedPrefs.getInt("led_blue", 255)
                     val scriptFile = File(context.filesDir, "custom_led.sh")
-
                     val customColorScript = """
                         #!/system/bin/sh
                         while true; do
@@ -54,7 +55,6 @@ class BootReceiver : BroadcastReceiver() {
                             sleep 1
                         done
                     """.trimIndent()
-
                     scriptFile.writeText(customColorScript)
                     RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
                     RootUtils.runAsRoot("${scriptFile.absolutePath} &")
@@ -66,6 +66,13 @@ class BootReceiver : BroadcastReceiver() {
                     scriptFile.writeText(TweakCommands.RGB_SCRIPT)
                     RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
                     RootUtils.runAsRoot("${scriptFile.absolutePath} &")
+                }
+            }
+
+            // --- CPU Lock Boot Logic ---
+            if (minFreqOnBoot) {
+                scope.launch {
+                    CpuUtils.startMinFreqLock(context)
                 }
             }
         }
