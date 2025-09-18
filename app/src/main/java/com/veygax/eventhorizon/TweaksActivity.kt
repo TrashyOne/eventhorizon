@@ -33,6 +33,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -138,6 +139,11 @@ fun TweaksScreen(
     var isWirelessAdbEnabled by remember { mutableStateOf(false) }
     var wifiIpAddress by remember { mutableStateOf("N/A") }
 
+    // --- CPU Monitor States ---
+    var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
+    var isFahrenheit by rememberSaveable { mutableStateOf(false) }
+
+
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
     var isTeleportLimitDisabled by rememberSaveable { mutableStateOf(false) }
@@ -145,6 +151,16 @@ fun TweaksScreen(
     var isPanelScalingEnabled by rememberSaveable { mutableStateOf(false) }
     var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
 
+
+    // --- LaunchedEffect for periodic CPU monitoring ---
+    LaunchedEffect(isRooted) {
+        if (isRooted) {
+            while (true) {
+                cpuMonitorInfo = CpuUtils.getCpuMonitorInfo()
+                delay(2000) // Refresh every 2 seconds
+            }
+        }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -442,6 +458,57 @@ fun TweaksScreen(
             
             item {
                 TweakSection(title = "CPU Tweaks") {
+                    // --- Centered and Compacted CPU Monitor Card ---
+                    if (isRooted) {
+                        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(text = "CPU Monitor", style = MaterialTheme.typography.titleMedium)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                // Declare temp variables here so they are in scope for the Text below
+                                val tempC = cpuMonitorInfo.tempCelsius
+                                val tempF = (tempC * 9 / 5) + 32
+
+                                // Temperature Toggle
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("°C")
+                                    Switch(
+                                        checked = isFahrenheit,
+                                        onCheckedChange = { isFahrenheit = it },
+                                        modifier = Modifier.height(24.dp).padding(horizontal = 8.dp)
+                                    )
+                                    Text("°F")
+                                }
+                                Text(
+                                    text = if (isFahrenheit) "$tempF °F" else "$tempC °C",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                // Core Details
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceAround
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Big Cores", fontWeight = FontWeight.Bold)
+                                        Text("${cpuMonitorInfo.bigCoreUsagePercent}% Usage")
+                                        Text("${cpuMonitorInfo.bigCoreMaxFreqMhz} - ${cpuMonitorInfo.bigCoreMinFreqMhz} MHz")
+                                    }
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("LITTLE Cores", fontWeight = FontWeight.Bold)
+                                        Text("${cpuMonitorInfo.littleCoreUsagePercent}% Usage")
+                                        Text("${cpuMonitorInfo.littleCoreMaxFreqMhz} - ${cpuMonitorInfo.littleCoreMinFreqMhz} MHz")
+                                    }
+                                }
+                            }
+                        }
+                    }
                     TweakCard("Set Min Frequency", "Sets minimum CPU frequency to 691MHz (Instead of max)") {
                         Column(horizontalAlignment = Alignment.End) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
