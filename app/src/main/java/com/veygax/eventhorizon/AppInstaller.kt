@@ -28,9 +28,21 @@ object AppInstaller {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val fileName = asset.getString("name")
-                    if (fileName.endsWith(".apk")) {
+                    // Added "-signed" to prioritize the correct Shizuku APK
+                    if (fileName.endsWith(".apk") && fileName.contains("-signed")) {
                         apkUrl = asset.getString("browser_download_url")
                         break
+                    }
+                }
+
+                // Fallback for releases without a "-signed" apk
+                if (apkUrl == null) {
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.getJSONObject(i)
+                        if (asset.getString("name").endsWith(".apk")) {
+                            apkUrl = asset.getString("browser_download_url")
+                            break
+                        }
                     }
                 }
 
@@ -50,7 +62,6 @@ object AppInstaller {
 
                 // Step 3: Install the APK using root
                 onStatusUpdate("Installing...")
-                // The -r flag allows reinstalling/updating the app
                 val result = RootUtils.runAsRoot("pm install -r \"${apkFile.absolutePath}\"")
 
                 // Step 4: Cleanup
@@ -60,10 +71,46 @@ object AppInstaller {
                     onStatusUpdate("$repo installed successfully!")
                     return@withContext true
                 } else {
-                    onStatusUpdate("Installation failed. Result:\n$result")
+                    onStatusUpdate("Installation failed.")
                     return@withContext false
                 }
 
+            } catch (e: Exception) {
+                onStatusUpdate("An error occurred: ${e.message}")
+                e.printStackTrace()
+                return@withContext false
+            }
+        }
+    }
+
+    // --- Function for direct APK links ---
+    suspend fun downloadAndInstallFromUrl(
+        context: Context,
+        apkUrl: String,
+        appName: String,
+        onStatusUpdate: (String) -> Unit
+    ): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                onStatusUpdate("Downloading $appName...")
+                val apkFile = File(context.cacheDir, "$appName.apk")
+                URL(apkUrl).openStream().use { input ->
+                    FileOutputStream(apkFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                onStatusUpdate("Installing...")
+                val result = RootUtils.runAsRoot("pm install -r \"${apkFile.absolutePath}\"")
+                apkFile.delete()
+
+                if (result.contains("Success")) {
+                    onStatusUpdate("$appName installed successfully!")
+                    return@withContext true
+                } else {
+                    onStatusUpdate("Installation failed.")
+                    return@withContext false
+                }
             } catch (e: Exception) {
                 onStatusUpdate("An error occurred: ${e.message}")
                 e.printStackTrace()

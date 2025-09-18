@@ -2,6 +2,8 @@ package com.veygax.eventhorizon
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -20,6 +22,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+
+// --- Data class to organize app information ---
+data class AppInfo(
+    val title: String,
+    val description: String,
+    val packageName: String,
+    val installAction: suspend (Context, (String) -> Unit) -> Unit,
+    val type: AppInstallType = AppInstallType.AUTOMATIC
+)
+
+enum class AppInstallType {
+    AUTOMATIC,
+    MANUAL_LINK
+}
 
 class AppsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,9 +66,44 @@ fun AppsScreen() {
     val activity = context as? Activity
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
 
-    var installStatus by remember { mutableStateOf("Ready to install.") }
-    var isInstalling by remember { mutableStateOf(false) }
-
+    // --- List of apps to be displayed ---
+    val appList = listOf(
+        AppInfo(
+            title = "Dock Editor",
+            description = "A simple tool for the Quest 3/3s that allows you to edit the pinned applications on the dock.",
+            packageName = "com.lumi.dockeditor",
+            installAction = { ctx, onStatus ->
+                AppInstaller.downloadAndInstall(ctx, "Lumince", "DockEditor", onStatus)
+            }
+        ),
+        AppInfo(
+            title = "Shizuku",
+            description = "Lets other apps use system-level features by giving them elevated permissions.",
+            packageName = "moe.shizuku.privileged.api",
+            installAction = { ctx, onStatus ->
+                AppInstaller.downloadAndInstall(ctx, "RikkaApps", "Shizuku", onStatus)
+            }
+        ),
+        AppInfo(
+            title = "MiXplorer",
+            description = "Root File Explorer.",
+            packageName = "com.mixplorer",
+            type = AppInstallType.AUTOMATIC,
+            installAction = { ctx, onStatus ->
+                val directUrl = "https://mixplorer.com/beta/MiXplorer_v6.68.4-Beta_B24112312-arm64.apk"
+                AppInstaller.downloadAndInstallFromUrl(ctx, directUrl, "MiXplorer", onStatus)
+            }
+        )
+    )
+    
+    val appStates = remember {
+        mutableStateMapOf<String, Pair<String, Boolean>>().apply {
+            appList.forEach { app ->
+                this[app.packageName] = Pair("Ready", false) // Status and IsInstalling flag
+            }
+        }
+    }
+    
     // State for Dogfood Hub feature
     var showRestartDialog by remember { mutableStateOf(false) }
     var restartDialogContent by remember { mutableStateOf<Pair<String, () -> Unit>>(Pair("", {})) }
@@ -100,10 +151,10 @@ fun AppsScreen() {
             modifier = Modifier
                 .padding(innerPadding)
                 .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
-                // Dogfood Hub card is now first
                 Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
@@ -136,30 +187,34 @@ fun AppsScreen() {
                     }
                 }
             }
-            item {
+            items(appList.size) { index ->
+                val app = appList[index]
+                val status = appStates[app.packageName]?.first ?: "Ready"
+                val isInstalling = appStates[app.packageName]?.second ?: false
+                
                 AppCard(
-                    title = "Dock Editor",
-                    description = "A simple editor for the Quest's dock bar.",
-                    status = installStatus
+                    title = app.title,
+                    description = app.description,
+                    status = status
                 ) {
+                    val buttonText = when {
+                        isInstalling -> "Installing..."
+                        app.type == AppInstallType.MANUAL_LINK -> "Open Link"
+                        else -> "Install"
+                    }
                     Button(
                         onClick = {
-                            isInstalling = true
+                            appStates[app.packageName] = Pair("Starting...", true)
                             coroutineScope.launch {
-                                AppInstaller.downloadAndInstall(
-                                    context = context,
-                                    owner = "Lumince",
-                                    repo = "DockEditor",
-                                    onStatusUpdate = { newStatus ->
-                                        installStatus = newStatus
-                                    }
-                                )
-                                isInstalling = false
+                                app.installAction(context) { newStatus ->
+                                    appStates[app.packageName] = Pair(newStatus, true)
+                                }
+                                appStates[app.packageName] = Pair(appStates[app.packageName]?.first ?: "Done", false)
                             }
                         },
                         enabled = !isInstalling
                     ) {
-                        Text(if (isInstalling) "Installing..." else "Install")
+                        Text(buttonText)
                     }
                 }
             }
@@ -179,7 +234,7 @@ fun AppCard(title: String, description: String, status: String, content: @Compos
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                    Text(text = title, style = MaterialTheme.typography.titleLarge)
+                    Text(text = title, style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(text = description, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -195,7 +250,6 @@ fun AppCard(title: String, description: String, status: String, content: @Compos
     }
 }
 
-// Moved Dogfood commands here to keep them self-contained with the activity
 object DogfoodCommands {
     const val ENABLE_DOGFOOD_STEP_1 = "magisk resetprop ro.build.type userdebug\nstop\nstart"
     const val ENABLE_DOGFOOD_STEP_2 = "am broadcast -a oculus.intent.action.DC_OVERRIDE --esa config_param_value oculus_systemshell:oculus_is_trusted_user:true\nstop\nstart"
