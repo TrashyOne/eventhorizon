@@ -19,20 +19,30 @@ class BootReceiver : BroadcastReceiver() {
             val rainbowLedOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
             val minFreqOnBoot = sharedPrefs.getBoolean("min_freq_on_boot", false)
 
+            // --- Activity Boot Logic ---
+            // Create a single intent to be launched only if needed.
+            val startIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            var shouldStartActivity = false
+
             if (rootOnBoot) {
                 val rootBeer = RootBeer(context)
                 if (!rootBeer.isRooted) {
-                    val startIntent = Intent(context, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        putExtra("auto_root", true)
-                    }
-                    context.startActivity(startIntent)
+                    // Add the auto_root instruction to our single intent
+                    startIntent.putExtra("auto_root", true)
+                    shouldStartActivity = true
                 }
-            } else if (blockerOnBoot) {
-                val startIntent = Intent(context, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    putExtra("start_dns_blocker", true)
-                }
+            }
+            
+            if (blockerOnBoot) {
+                // Add the start_dns_blocker instruction to our single intent
+                startIntent.putExtra("start_dns_blocker", true)
+                shouldStartActivity = true
+            }
+
+            // After checking all conditions, launch the activity just once if required.
+            if (shouldStartActivity) {
                 context.startActivity(startIntent)
             }
 
