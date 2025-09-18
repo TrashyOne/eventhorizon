@@ -5,8 +5,10 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.text.format.Formatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -133,6 +135,8 @@ fun TweaksScreen(
     var minFreqOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("min_freq_on_boot", false)) }
     var isMinFreqExecuting by remember { mutableStateOf(false) }
     var isCpuPerfMode by remember { mutableStateOf(false) }
+    var isWirelessAdbEnabled by remember { mutableStateOf(false) }
+    var wifiIpAddress by remember { mutableStateOf("N/A") }
 
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
@@ -152,9 +156,17 @@ fun TweaksScreen(
                     coroutineScope.launch {
                         val runningRgb = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
                         isRgbExecuting = runningRgb.trim().toIntOrNull() != null
-                        // The two lines checking for the running CPU script have been removed to prevent race conditions.
+                        val runningCpu = RootUtils.runAsRoot("pgrep -f ${CpuUtils.SCRIPT_NAME}")
+                        isMinFreqExecuting = runningCpu.trim().toIntOrNull() != null
                         val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
                         isCpuPerfMode = cpuGov.trim() == "performance"
+                        val adbPort = RootUtils.runAsRoot("getprop service.adb.tcp.port").trim()
+                        isWirelessAdbEnabled = adbPort == "5555"
+                        
+                        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                        @Suppress("DEPRECATION")
+                        val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
+                        wifiIpAddress = if (ip == "0.0.0.0") "Not connected to Wi-Fi" else ip
                     }
                 }
             }
@@ -176,6 +188,8 @@ fun TweaksScreen(
             
             val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
             isCpuPerfMode = cpuGov.trim() == "performance"
+            val adbPort = RootUtils.runAsRoot("getprop service.adb.tcp.port").trim()
+            isWirelessAdbEnabled = adbPort == "5555"
 
             val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
             uiSwitchState = if (uiStateValue.contains(": 1")) 1 else 0
@@ -303,6 +317,29 @@ fun TweaksScreen(
                                     }
                                 })
                             }
+                        }
+                    }
+                    TweakCard("Wireless ADB", "Enables connecting to ADB over Wi-Fi.") {
+                        Column(horizontalAlignment = Alignment.End) {
+                            if (isWirelessAdbEnabled) {
+                                Text(
+                                    text = "adb connect $wifiIpAddress:5555",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            Switch(
+                                checked = isWirelessAdbEnabled,
+                                onCheckedChange = { isEnabled ->
+                                    isWirelessAdbEnabled = isEnabled
+                                    coroutineScope.launch {
+                                        val port = if (isEnabled) "5555" else "-1"
+                                        RootUtils.runAsRoot("setprop service.adb.tcp.port $port")
+                                        RootUtils.runAsRoot("stop adbd && start adbd")
+                                        snackbarHostState.showSnackbar(if (isEnabled) "Wireless ADB Enabled." else "Wireless ADB Disabled.")
+                                    }
+                                },
+                                enabled = isRooted
+                            )
                         }
                     }
                 }

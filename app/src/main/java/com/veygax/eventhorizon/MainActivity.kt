@@ -196,7 +196,6 @@ fun EventHorizonApp(
         }
     }
 
-    // New effect to handle starting the DNS blocker on boot
     LaunchedEffect(autoStartDnsBlocker) {
         if (autoStartDnsBlocker) {
             onRequestVpnPermission()
@@ -331,6 +330,15 @@ fun EventHorizonApp(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Apps")
+                }
+                Button(
+                    onClick = {
+                        val intent = Intent(context, TerminalActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Terminal")
                 }
             }
         } else {
