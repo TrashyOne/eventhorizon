@@ -249,7 +249,7 @@ fun TweaksScreen(
         ) {
             item {
                 TweakSection(title = "General") {
-                    TweakCard("Rainbow LED", "Cyclesnotification LED through colors.") {
+                    TweakCard("Rainbow LED", "Cycles notification LED through colors.") {
                         Column(horizontalAlignment = Alignment.End) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
