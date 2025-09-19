@@ -6,10 +6,15 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -18,10 +23,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -172,6 +180,7 @@ fun EventHorizonApp(
 ) {
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
+    val coroutineScope = rememberCoroutineScope()
 
     var rootOnBoot by remember { mutableStateOf(sharedPrefs.getBoolean("root_on_boot", false)) }
     var consoleText by remember { mutableStateOf("") }
@@ -179,10 +188,50 @@ fun EventHorizonApp(
     var isProcessRunning by remember { mutableStateOf(false) }
     var isRooted by remember { mutableStateOf(false) }
 
+    // --- State for the App Updater ---
+    var isCheckingForUpdate by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0f) }
+    var updateStatusText by remember { mutableStateOf("") }
+    // --- End of Updater State ---
+
+    // --- Animation State for Update Icon ---
+    val rotationAngle = remember { Animatable(0f) }
+
     val mainActivity = (LocalContext.current as MainActivity)
 
+    // Function to check for updates
+    fun checkForUpdate(isManual: Boolean) {
+        coroutineScope.launch {
+            // On a manual check, launch a separate coroutine for the animation.
+            // This ensures the animation completes regardless of how fast the check is.
+            if (isManual) {
+                launch {
+                    rotationAngle.animateTo(
+                        targetValue = rotationAngle.value + 360f,
+                        animationSpec = tween(durationMillis = 1000, easing = LinearEasing)
+                    )
+                }
+            }
+
+            isCheckingForUpdate = true
+            val release = UpdateManager.checkForUpdate(context)
+            isCheckingForUpdate = false
+            if (release != null) {
+                updateInfo = release
+                showUpdateDialog = true
+            } else if (isManual) {
+                Toast.makeText(context, "You are on the latest version", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Automatically check for updates on startup
     LaunchedEffect(Unit) {
         isRooted = RootUtils.isRootAvailable()
+        checkForUpdate(isManual = false)
     }
 
     LaunchedEffect(autoRootOnStart) {
@@ -207,13 +256,34 @@ fun EventHorizonApp(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Text(
-            text = "eventhorizon",
-            style = MaterialTheme.typography.headlineLarge,
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Left,
-            color = MaterialTheme.colorScheme.primary
-        )
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "eventhorizon",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.weight(1f))
+
+            // --- Update Icon ---
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable(enabled = !isCheckingForUpdate) { checkForUpdate(isManual = true) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Sync,
+                    contentDescription = "Check for Updates",
+                    modifier = Modifier
+                        .size(28.dp)
+                        .rotate(rotationAngle.value),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -388,4 +458,96 @@ fun EventHorizonApp(
             }
         }
     }
+
+    // --- Update Dialog ---
+    updateInfo?.let { currentUpdateInfo ->
+        if (showUpdateDialog) {
+            UpdateDialog(
+                releaseInfo = currentUpdateInfo,
+                isDownloading = isDownloading,
+                downloadProgress = downloadProgress,
+                statusText = updateStatusText,
+                onDismiss = { showUpdateDialog = false },
+                onConfirm = {
+                    coroutineScope.launch {
+                        isDownloading = true
+                        UpdateManager.downloadAndInstallUpdate(
+                            context = context,
+                            url = currentUpdateInfo.downloadUrl,
+                            onProgress = { progress -> downloadProgress = progress },
+                            onStatusUpdate = { status -> updateStatusText = status }
+                        )
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun UpdateDialog(
+    releaseInfo: UpdateManager.ReleaseInfo,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    isDownloading: Boolean,
+    downloadProgress: Float,
+    statusText: String
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isDownloading) onDismiss() },
+        title = { Text("Update Available: ${releaseInfo.version}") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (!isDownloading) {
+                    Text(
+                        "A new version of eventhorizon is available. Would you like to update?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "Changelog:",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        releaseInfo.changelog,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                } else {
+                    Text(
+                        text = statusText,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    LinearProgressIndicator(
+                        progress = downloadProgress,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isDownloading
+            ) {
+                Text("Install")
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = onDismiss,
+                enabled = !isDownloading,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text(if (statusText.contains("failed", ignoreCase = true)) "Close" else "Later")
+            }
+        }
+    )
 }
