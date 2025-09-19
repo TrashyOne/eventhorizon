@@ -2,6 +2,17 @@
 # eventhorizon
 the root tool for the meta surveillance devices (Quest 3/3s). ROOT ON BOOT
 
+# AIO Editions: 
+(Please grant eventhorizon root access after rooting for most of these to work)
+
+- All "safe root things" tweaks + Custom color selection
+- Meta Domain Blocker (no root required)
+- Terminal built into the app with root access
+- Wireless ADB with root access
+- CPU Tweaks: Temp/Freq monitoring, set minimum freq toggle, & governor switch (schedutil and performance)
+- App section with useful apps to install & a dogfood hub toggle
+
+
 > [!CAUTION]
 > No "developers" involved or mentioned with/in this project are responsible for any damage that may occur during, before or after the process. "Developers" involved includes but is not limited to, all individuals and organizations mentioned in the code/credits section, @veygax and FreeXR.
 
@@ -17,3 +28,4 @@ download the apk from releases and sideload
 - Freedreno from Mesa
 - shellcode from Longterm Security
 - Magisk from topjohnwu and the Magisk developers.
+- Thanks to Rosie & Mandi in the FreeXR discord for the block list additions

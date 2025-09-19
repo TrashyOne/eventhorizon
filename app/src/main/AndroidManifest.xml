@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:allowBackup="true"
@@ -18,12 +20,52 @@
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.Eventhorizon">
+
+        <layout
+            android:defaultWidth="450dp"
+            android:defaultHeight="800dp" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".TweaksActivity"
+            android:exported="false"
+            android:label="AIO Tweaks"
+            android:theme="@style/Theme.Eventhorizon" />
+
+        <activity
+            android:name=".AppsActivity"
+            android:exported="false"
+            android:label="Install Apps"
+            android:theme="@style/Theme.Eventhorizon" />
+
+        <activity
+            android:name=".LedColorActivity"
+            android:exported="false"
+            android:label="Custom LED Color"
+            android:theme="@style/Theme.Eventhorizon" />
+
+        <activity
+            android:name=".TerminalActivity"
+            android:exported="false"
+            android:label="Root Terminal"
+            android:theme="@style/Theme.Eventhorizon"
+            android:windowSoftInputMode="adjustResize" />
+
+        <service
+            android:name=".DnsBlockerService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+                <action android:name="com.veygax.eventhorizon.START_VPN" />
+                <action android:name="com.veygax.eventhorizon.STOP_VPN" />
+            </intent-filter>
+        </service>
 
         <receiver
             android:name=".BootReceiver"
