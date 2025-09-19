@@ -45,12 +45,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     
-    // I have changed the version here to a stable one.
     val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-    // Choose one of the following:
     // Material Design 3
     implementation("androidx.compose.material3:material3")
     implementation("com.google.android.material:material:1.9.0")
