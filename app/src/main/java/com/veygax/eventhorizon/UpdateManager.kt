@@ -110,27 +110,31 @@ object UpdateManager {
                 onProgress(0f)
 
                 val connection = URL(url).openConnection() as HttpURLConnection
-                connection.connectTimeout = TIMEOUT_MS
-                connection.readTimeout = TIMEOUT_MS
-                connection.connect()
+                try {
+                    connection.connectTimeout = TIMEOUT_MS
+                    connection.readTimeout = TIMEOUT_MS
+                    connection.connect()
 
-                val fileLength = connection.contentLength
-                val apkFile = File(context.cacheDir, "update.apk")
+                    val fileLength = connection.contentLength
+                    val apkFile = File(context.cacheDir, "update.apk")
 
-                connection.inputStream.use { input ->
-                    FileOutputStream(apkFile).use { output ->
-                        val data = ByteArray(4096)
-                        var total: Long = 0
-                        var count: Int
-                        while (input.read(data).also { count = it } != -1) {
-                            total += count
-                            if (fileLength > 0) {
-                                val progress = total.toFloat() / fileLength
-                                withContext(Dispatchers.Main) { onProgress(progress) }
+                    connection.inputStream.use { input ->
+                        FileOutputStream(apkFile).use { output ->
+                            val data = ByteArray(4096)
+                            var total: Long = 0
+                            var count: Int
+                            while (input.read(data).also { count = it } != -1) {
+                                total += count
+                                if (fileLength > 0) {
+                                    val progress = total.toFloat() / fileLength
+                                    withContext(Dispatchers.Main) { onProgress(progress) }
+                                }
+                                output.write(data, 0, count)
                             }
-                            output.write(data, 0, count)
                         }
                     }
+                } finally {
+                    connection.disconnect()
                 }
 
                 onStatusUpdate("Download complete. Installing...")
