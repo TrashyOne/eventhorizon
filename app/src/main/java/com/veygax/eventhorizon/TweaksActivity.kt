@@ -143,6 +143,8 @@ fun TweaksScreen(
     var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
     var isFahrenheit by rememberSaveable { mutableStateOf(false) }
 
+    // --- Intercept Startup Apps ---
+    var isInterceptorEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("intercept_startup_apps", false)) }
 
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
@@ -357,6 +359,28 @@ fun TweaksScreen(
                                 enabled = isRooted
                             )
                         }
+                    }
+                    TweakCard("Intercept App Launching", "Stops Horizon Feed and Connections from being started.") {
+                        Switch(
+                            checked = isInterceptorEnabled,
+                            onCheckedChange = { isEnabled ->
+                                isInterceptorEnabled = isEnabled
+                                // Save the setting so the BootReceiver can read it
+                                sharedPrefs.edit().putBoolean("intercept_startup_apps", isEnabled).apply()
+
+                                coroutineScope.launch {
+                                    if (isEnabled) {
+                                        // This tweak runs on boot, so we just inform the user.
+                                        snackbarHostState.showSnackbar("Startup App Interceptor will run on next boot.")
+                                    } else {
+                                        // If the user disables it, we should stop any potentially running script immediately.
+                                        AppInterceptor.stop()
+                                        snackbarHostState.showSnackbar("Startup App Interceptor Disabled.")
+                                    }
+                                }
+                            },
+                            enabled = isRooted
+                        )
                     }
                 }
             }

@@ -18,6 +18,8 @@ class BootReceiver : BroadcastReceiver() {
             val customLedOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
             val rainbowLedOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
             val minFreqOnBoot = sharedPrefs.getBoolean("min_freq_on_boot", false)
+            val interceptStartupApps = sharedPrefs.getBoolean("intercept_startup_apps", false)
+            val scope = CoroutineScope(Dispatchers.IO)
 
             // --- Activity Boot Logic ---
             // Create a single intent to be launched only if needed.
@@ -47,8 +49,6 @@ class BootReceiver : BroadcastReceiver() {
             }
 
             // --- LED Boot Logic ---
-            val scope = CoroutineScope(Dispatchers.IO)
-
             if (customLedOnBoot) {
                 // If custom color on boot is enabled, run its persistent script
                 scope.launch {
@@ -84,6 +84,12 @@ class BootReceiver : BroadcastReceiver() {
                 scope.launch {
                     CpuUtils.startMinFreqLock(context)
                 }
+            }
+
+            // --- Intercept Startup Apps Logic ---
+            if (interceptStartupApps) {
+                // The start() method handles its own coroutine, so no need to wrap it here.
+                AppInterceptor.start(context)
             }
         }
     }
