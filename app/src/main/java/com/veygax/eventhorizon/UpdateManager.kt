@@ -22,13 +22,14 @@ object UpdateManager {
      */
     suspend fun checkForUpdate(context: Context): ReleaseInfo? {
         return withContext(Dispatchers.IO) {
+            var connection: HttpURLConnection? = null
             try {
                 val owner = "veygax"
                 val repo = "eventhorizon"
                 val apiUrl = "https://api.github.com/repos/$owner/$repo/releases/latest"
 
                 val url = URL(apiUrl)
-                val connection = url.openConnection() as HttpURLConnection
+                connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = TIMEOUT_MS
                 connection.readTimeout = TIMEOUT_MS
                 val jsonText = connection.inputStream.bufferedReader().readText()
@@ -71,6 +72,8 @@ object UpdateManager {
                 Log.e("UpdateManager", "Failed to check for updates: ${e.message}")
                 e.printStackTrace()
                 return@withContext null
+            } finally {
+                connection?.disconnect()
             }
         }
     }
@@ -105,36 +108,34 @@ object UpdateManager {
         onStatusUpdate: (String) -> Unit
     ) {
         withContext(Dispatchers.IO) {
+            var connection: HttpURLConnection? = null
+            // **FIX:** Declare apkFile here, in the outer scope.
+            val apkFile = File(context.cacheDir, "update.apk")
             try {
                 onStatusUpdate("Starting download...")
                 onProgress(0f)
 
-                val connection = URL(url).openConnection() as HttpURLConnection
-                try {
-                    connection.connectTimeout = TIMEOUT_MS
-                    connection.readTimeout = TIMEOUT_MS
-                    connection.connect()
+                connection = URL(url).openConnection() as HttpURLConnection
+                connection.connectTimeout = TIMEOUT_MS
+                connection.readTimeout = TIMEOUT_MS
+                connection.connect()
 
-                    val fileLength = connection.contentLength
-                    val apkFile = File(context.cacheDir, "update.apk")
+                val fileLength = connection.contentLength
 
-                    connection.inputStream.use { input ->
-                        FileOutputStream(apkFile).use { output ->
-                            val data = ByteArray(4096)
-                            var total: Long = 0
-                            var count: Int
-                            while (input.read(data).also { count = it } != -1) {
-                                total += count
-                                if (fileLength > 0) {
-                                    val progress = total.toFloat() / fileLength
-                                    withContext(Dispatchers.Main) { onProgress(progress) }
-                                }
-                                output.write(data, 0, count)
+                connection.inputStream.use { input ->
+                    FileOutputStream(apkFile).use { output ->
+                        val data = ByteArray(4096)
+                        var total: Long = 0
+                        var count: Int
+                        while (input.read(data).also { count = it } != -1) {
+                            total += count
+                            if (fileLength > 0) {
+                                val progress = total.toFloat() / fileLength
+                                withContext(Dispatchers.Main) { onProgress(progress) }
                             }
+                            output.write(data, 0, count)
                         }
                     }
-                } finally {
-                    connection.disconnect()
                 }
 
                 onStatusUpdate("Download complete. Installing...")
@@ -150,6 +151,8 @@ object UpdateManager {
             } catch (e: Exception) {
                 onStatusUpdate("An error occurred: ${e.message}")
                 Log.e("UpdateManager", "Download/Install error", e)
+            } finally {
+                connection?.disconnect()
             }
         }
     }
