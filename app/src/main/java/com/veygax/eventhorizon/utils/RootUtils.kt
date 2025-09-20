@@ -1,4 +1,4 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.utils
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -59,4 +59,3 @@ object RootUtils {
         }
     }
 }
-

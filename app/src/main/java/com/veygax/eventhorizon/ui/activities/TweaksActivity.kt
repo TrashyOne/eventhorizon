@@ -1,4 +1,4 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.ui.activities
 
 import android.app.Activity
 import android.app.ActivityManager
@@ -33,6 +33,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.veygax.eventhorizon.core.AppInterceptor
+import com.veygax.eventhorizon.system.DnsBlockerService
+import com.veygax.eventhorizon.utils.CpuMonitorInfo
+import com.veygax.eventhorizon.utils.CpuUtils
+import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File

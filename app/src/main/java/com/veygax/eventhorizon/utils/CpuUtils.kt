@@ -1,4 +1,4 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.utils
 
 import android.content.Context
 import android.util.Log

@@ -1,4 +1,4 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.ui.activities
 
 import android.app.Activity
 import android.os.Build
@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.launch
 
 class TerminalActivity : ComponentActivity() {
@@ -105,7 +106,7 @@ fun TerminalScreen() {
                         text = line,
                         fontFamily = FontFamily.Monospace,
                         color = Color.White,
-                        fontSize = 12.sp // Changed font size to be smaller
+                        fontSize = 12.sp
                     )
                 }
             }

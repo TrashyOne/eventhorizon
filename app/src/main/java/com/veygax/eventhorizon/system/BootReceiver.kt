@@ -1,9 +1,14 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.system
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.scottyab.rootbeer.RootBeer
+import com.veygax.eventhorizon.core.AppInterceptor
+import com.veygax.eventhorizon.ui.activities.MainActivity
+import com.veygax.eventhorizon.ui.activities.TweakCommands
+import com.veygax.eventhorizon.utils.CpuUtils
+import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
