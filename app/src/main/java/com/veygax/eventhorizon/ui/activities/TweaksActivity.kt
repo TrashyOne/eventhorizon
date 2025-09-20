@@ -146,7 +146,7 @@ fun TweaksScreen(
 
     // --- CPU Monitor States ---
     var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
-    var isFahrenheit by rememberSaveable { mutableStateOf(false) }
+    var isFahrenheit by remember { mutableStateOf(sharedPrefs.getBoolean("temp_unit_is_fahrenheit", false)) }
 
     // --- Intercept Startup Apps ---
     var isInterceptorEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("intercept_startup_apps", false)) }
@@ -506,7 +506,10 @@ fun TweaksScreen(
                                     Text("°C")
                                     Switch(
                                         checked = isFahrenheit,
-                                        onCheckedChange = { isFahrenheit = it },
+                                        onCheckedChange = { checked ->
+                                            isFahrenheit = checked
+                                            sharedPrefs.edit().putBoolean("temp_unit_is_fahrenheit", checked).apply()
+                                        },
                                         modifier = Modifier.height(24.dp).padding(horizontal = 8.dp)
                                     )
                                     Text("°F")
