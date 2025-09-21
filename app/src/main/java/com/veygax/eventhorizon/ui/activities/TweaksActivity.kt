@@ -143,6 +143,8 @@ fun TweaksScreen(
     var isCpuPerfMode by remember { mutableStateOf(false) }
     var isWirelessAdbEnabled by remember { mutableStateOf(false) }
     var wifiIpAddress by remember { mutableStateOf("N/A") }
+    var wirelessAdbOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("wireless_adb_on_boot", false)) }
+
 
     // --- CPU Monitor States ---
     var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
@@ -347,6 +349,20 @@ fun TweaksScreen(
                     }
                     TweakCard("Wireless ADB", "Enables connecting to ADB over Wi-Fi.") {
                         Column(horizontalAlignment = Alignment.End) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.width(8.dp))
+                                Switch(
+                                    checked = wirelessAdbOnBoot,
+                                    onCheckedChange = { checked ->
+                                        wirelessAdbOnBoot = checked
+                                        sharedPrefs.edit().putBoolean("wireless_adb_on_boot", checked).apply()
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Wireless ADB on Boot Enabled" else "Wireless ADB on Boot Disabled") }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
                             if (isWirelessAdbEnabled) {
                                 Text(
                                     text = "adb connect $wifiIpAddress:5555",
