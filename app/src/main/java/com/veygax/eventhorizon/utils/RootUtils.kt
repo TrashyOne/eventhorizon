@@ -55,7 +55,7 @@ object RootUtils {
             } catch (e: Exception) {
                 return@withContext "Execution failed: ${e.message}"
             }
-            if (output.isBlank()) "Command executed successfully (no output)." else output.toString()
+            output.toString()
         }
     }
 }

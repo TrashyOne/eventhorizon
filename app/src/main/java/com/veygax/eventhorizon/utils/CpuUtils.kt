@@ -146,13 +146,7 @@ object CpuUtils {
 
     suspend fun stopMinFreqLock() {
         Log.d(TAG, "Attempting to stop Min Freq script...")
-        val pid = RootUtils.runAsRoot("pgrep -f $SCRIPT_NAME").trim()
-        if (pid.isNotEmpty() && pid.toIntOrNull() != null) {
-            Log.d(TAG, "Found running script with PID: $pid. Killing process.")
-            RootUtils.runAsRoot("kill $pid")
-        } else {
-            Log.d(TAG, "No running script found to stop.")
-        }
-        Log.d(TAG, "Stop command sequence complete.")
+        RootUtils.runAsRoot("pkill -f $SCRIPT_NAME || true")
+        Log.d(TAG, "Stop command issued for Min Freq script.")
     }
 }

@@ -177,10 +177,12 @@ fun TweaksScreen(
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
                 if (isRooted) {
                     coroutineScope.launch {
-                        val runningRgb = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
-                        isRgbExecuting = runningRgb.trim().toIntOrNull() != null
-                        val runningCpu = RootUtils.runAsRoot("pgrep -f ${CpuUtils.SCRIPT_NAME}")
-                        isMinFreqExecuting = runningCpu.trim().toIntOrNull() != null
+                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
+                        isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
+                        
+                        val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
+                        isMinFreqExecuting = runningCpu.trim().isNotEmpty() && !runningCpu.contains("No such file")
+
                         val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
                         isCpuPerfMode = cpuGov.trim() == "performance"
                         val adbPort = RootUtils.runAsRoot("getprop service.adb.tcp.port").trim()
@@ -204,10 +206,11 @@ fun TweaksScreen(
     LaunchedEffect(isRooted) {
         isBlockerEnabled = isDnsServiceRunning()
         if (isRooted) {
-            val runningRgb = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
-            isRgbExecuting = runningRgb.trim().toIntOrNull() != null
-            val runningCpu = RootUtils.runAsRoot("pgrep -f ${CpuUtils.SCRIPT_NAME}")
-            isMinFreqExecuting = runningCpu.trim().toIntOrNull() != null
+            val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
+            isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
+
+            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
+            isMinFreqExecuting = runningCpu.trim().isNotEmpty() && !runningCpu.contains("No such file")
             
             val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
             isCpuPerfMode = cpuGov.trim() == "performance"
