@@ -365,22 +365,23 @@ fun TweaksScreen(
                             )
                         }
                     }
-                    TweakCard("Intercept App Launching", "Stops Horizon Feed and Connections from being started.") {
+                    TweakCard("Intercept App Launching", "Stops Horizon Feed and Social Connections from being started.") {
                         Switch(
                             checked = isInterceptorEnabled,
                             onCheckedChange = { isEnabled ->
                                 isInterceptorEnabled = isEnabled
-                                // Save the setting so the BootReceiver can read it
+                                // Save the setting so the BootReceiver can read it and the state persists.
                                 sharedPrefs.edit().putBoolean("intercept_startup_apps", isEnabled).apply()
 
                                 coroutineScope.launch {
                                     if (isEnabled) {
-                                        // This tweak runs on boot, so we just inform the user.
-                                        snackbarHostState.showSnackbar("Startup App Interceptor will run on next boot.")
+                                        // Start the watchdog script
+                                        AppInterceptor.start(context)
+                                        snackbarHostState.showSnackbar("App Interceptor Enabled.")
                                     } else {
-                                        // If the user disables it, we should stop any potentially running script immediately.
+                                        // Stop the watchdog script
                                         AppInterceptor.stop()
-                                        snackbarHostState.showSnackbar("Startup App Interceptor Disabled.")
+                                        snackbarHostState.showSnackbar("App Interceptor Disabled.")
                                     }
                                 }
                             },
