@@ -1,4 +1,4 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.ui.activities
 
 import android.app.Activity
 import android.content.Context
@@ -36,6 +36,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.veygax.eventhorizon.core.UpdateManager
+import com.veygax.eventhorizon.system.DnsBlockerService
+import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.onCompletion

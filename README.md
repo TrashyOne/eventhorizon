@@ -11,7 +11,7 @@ the root tool for the meta surveillance devices (Quest 3/3s). ROOT ON BOOT
 - Wireless ADB with root access
 - CPU Tweaks: Temp/Freq monitoring, set minimum freq toggle, & governor switch (schedutil and performance)
 - App section with useful apps to install & a dogfood hub toggle
-
+- Intercept system: Stops Horizon Feed & Social Connections from launching (No more seeing those apps on boot or when you wake your headset ever again!)
 
 > [!CAUTION]
 > No "developers" involved or mentioned with/in this project are responsible for any damage that may occur during, before or after the process. "Developers" involved includes but is not limited to, all individuals and organizations mentioned in the code/credits section, @veygax and FreeXR.

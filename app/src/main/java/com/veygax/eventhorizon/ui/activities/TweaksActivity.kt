@@ -1,4 +1,4 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.ui.activities
 
 import android.app.Activity
 import android.app.ActivityManager
@@ -33,6 +33,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.veygax.eventhorizon.core.AppInterceptor
+import com.veygax.eventhorizon.system.DnsBlockerService
+import com.veygax.eventhorizon.utils.CpuMonitorInfo
+import com.veygax.eventhorizon.utils.CpuUtils
+import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -141,8 +146,10 @@ fun TweaksScreen(
 
     // --- CPU Monitor States ---
     var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
-    var isFahrenheit by rememberSaveable { mutableStateOf(false) }
+    var isFahrenheit by remember { mutableStateOf(sharedPrefs.getBoolean("temp_unit_is_fahrenheit", false)) }
 
+    // --- Intercept Startup Apps ---
+    var isInterceptorEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("intercept_startup_apps", false)) }
 
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
@@ -170,10 +177,12 @@ fun TweaksScreen(
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
                 if (isRooted) {
                     coroutineScope.launch {
-                        val runningRgb = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
-                        isRgbExecuting = runningRgb.trim().toIntOrNull() != null
-                        val runningCpu = RootUtils.runAsRoot("pgrep -f ${CpuUtils.SCRIPT_NAME}")
-                        isMinFreqExecuting = runningCpu.trim().toIntOrNull() != null
+                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
+                        isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
+                        
+                        val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
+                        isMinFreqExecuting = runningCpu.trim().isNotEmpty() && !runningCpu.contains("No such file")
+
                         val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
                         isCpuPerfMode = cpuGov.trim() == "performance"
                         val adbPort = RootUtils.runAsRoot("getprop service.adb.tcp.port").trim()
@@ -197,10 +206,11 @@ fun TweaksScreen(
     LaunchedEffect(isRooted) {
         isBlockerEnabled = isDnsServiceRunning()
         if (isRooted) {
-            val runningRgb = RootUtils.runAsRoot("pgrep -f rgb_led.sh || pgrep -f custom_led.sh")
-            isRgbExecuting = runningRgb.trim().toIntOrNull() != null
-            val runningCpu = RootUtils.runAsRoot("pgrep -f ${CpuUtils.SCRIPT_NAME}")
-            isMinFreqExecuting = runningCpu.trim().toIntOrNull() != null
+            val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
+            isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
+
+            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
+            isMinFreqExecuting = runningCpu.trim().isNotEmpty() && !runningCpu.contains("No such file")
             
             val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
             isCpuPerfMode = cpuGov.trim() == "performance"
@@ -358,6 +368,29 @@ fun TweaksScreen(
                             )
                         }
                     }
+                    TweakCard("Intercept App Launching", "Stops Horizon Feed and Social Connections from being started.") {
+                        Switch(
+                            checked = isInterceptorEnabled,
+                            onCheckedChange = { isEnabled ->
+                                isInterceptorEnabled = isEnabled
+                                // Save the setting so the BootReceiver can read it and the state persists.
+                                sharedPrefs.edit().putBoolean("intercept_startup_apps", isEnabled).apply()
+
+                                coroutineScope.launch {
+                                    if (isEnabled) {
+                                        // Start the watchdog script
+                                        AppInterceptor.start(context)
+                                        snackbarHostState.showSnackbar("App Interceptor Enabled.")
+                                    } else {
+                                        // Stop the watchdog script
+                                        AppInterceptor.stop()
+                                        snackbarHostState.showSnackbar("App Interceptor Disabled.")
+                                    }
+                                }
+                            },
+                            enabled = isRooted
+                        )
+                    }
                 }
             }
 
@@ -477,7 +510,10 @@ fun TweaksScreen(
                                     Text("°C")
                                     Switch(
                                         checked = isFahrenheit,
-                                        onCheckedChange = { isFahrenheit = it },
+                                        onCheckedChange = { checked ->
+                                            isFahrenheit = checked
+                                            sharedPrefs.edit().putBoolean("temp_unit_is_fahrenheit", checked).apply()
+                                        },
                                         modifier = Modifier.height(24.dp).padding(horizontal = 8.dp)
                                     )
                                     Text("°F")
