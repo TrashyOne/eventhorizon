@@ -1,9 +1,10 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.system
 
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import com.veygax.eventhorizon.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

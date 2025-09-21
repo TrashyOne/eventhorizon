@@ -1,6 +1,7 @@
-package com.veygax.eventhorizon
+package com.veygax.eventhorizon.core
 
 import android.content.Context
+import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
