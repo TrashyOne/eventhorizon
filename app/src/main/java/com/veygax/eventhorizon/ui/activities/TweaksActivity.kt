@@ -145,7 +145,6 @@ fun TweaksScreen(
     var wifiIpAddress by remember { mutableStateOf("N/A") }
     var wirelessAdbOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("wireless_adb_on_boot", false)) }
 
-
     // --- CPU Monitor States ---
     var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
     var isFahrenheit by remember { mutableStateOf(sharedPrefs.getBoolean("temp_unit_is_fahrenheit", false)) }
@@ -406,6 +405,26 @@ fun TweaksScreen(
                             },
                             enabled = isRooted
                         )
+                    }
+                    TweakCard(
+                        title = "Fix Double-Tap Passthrough",
+                        description = "Applies fix for broken Double-Tap Passthrough feature."
+                    ) {
+                        var isRooted by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            isRooted = RootUtils.isRootAvailable()
+                        }
+
+                        Button(
+                            onClick = {
+                                coroutineScope.launch {
+                                    RootUtils.runAsRoot(TweakCommands.FIX_PASSTHROUGH)
+                                }
+                            },
+                            enabled = isRooted
+                        ) {
+                            Text("Apply")
+                        }
                     }
                 }
             }
@@ -699,6 +718,18 @@ done
     const val SET_TRANSITION_VOID = "oculuspreferences --setc shell_immersive_transitions_enabled false\nam force-stop com.oculus.vrshell"
     const val ENABLE_INFINITE_PANELS = "oculuspreferences --setc debug_infinite_spatial_panels_enabled true\nam force-stop com.oculus.vrshell"
     const val DISABLE_INFINITE_PANELS = "oculuspreferences --setc debug_infinite_spatial_panels_enabled false\nam force-stop com.oculus.vrshell"
+
+    // Command to fix the double-tap passthrough feature after rooting.
+    val FIX_PASSTHROUGH = """
+    PIDS=${'$'}(dumpsys sensorservice | grep -o "unknown_package_pid_[0-9]*" | sed 's/unknown_package_pid_//' | sort -u)
+      for pid in ${'$'}PIDS; do
+        kill ${'$'}pid
+      done
+    am force-stop com.oculus.vrshell
+    sleep 15
+    am startservice com.oculus.guardian/com.oculus.vrguardianservice.VrGuardianService
+    am start -n com.veygax.eventhorizon/.ui.activities.MainActivity
+    """.trimIndent()
 }
 
 @Preview(showBackground = true)
