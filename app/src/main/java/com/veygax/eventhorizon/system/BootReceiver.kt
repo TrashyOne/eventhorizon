@@ -24,6 +24,7 @@ class BootReceiver : BroadcastReceiver() {
             val rainbowLedOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
             val minFreqOnBoot = sharedPrefs.getBoolean("min_freq_on_boot", false)
             val interceptStartupApps = sharedPrefs.getBoolean("intercept_startup_apps", false)
+            val wirelessAdbOnBoot = sharedPrefs.getBoolean("wireless_adb_on_boot", false)
             val scope = CoroutineScope(Dispatchers.IO)
 
             // --- Activity Boot Logic ---
@@ -88,6 +89,14 @@ class BootReceiver : BroadcastReceiver() {
             if (minFreqOnBoot) {
                 scope.launch {
                     CpuUtils.startMinFreqLock(context)
+                }
+            }
+
+            // --- Wireless ADB Boot Logic ---
+            if (wirelessAdbOnBoot) {
+                scope.launch {
+                    RootUtils.runAsRoot("setprop service.adb.tcp.port 5555")
+                    RootUtils.runAsRoot("stop adbd && start adbd")
                 }
             }
 
