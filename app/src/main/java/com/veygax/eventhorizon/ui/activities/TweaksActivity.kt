@@ -177,6 +177,16 @@ fun TweaksScreen(
         }
     }
 
+    // Prepare the script file in the background on startup
+    LaunchedEffect(Unit) {
+        launch(Dispatchers.IO) {
+            if (!scriptFile.exists()) {
+                scriptFile.writeText(TweakCommands.RGB_SCRIPT)
+                RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
+            }
+        }
+    }
+
     // --- LaunchedEffect for periodic CPU monitoring ---
     LaunchedEffect(isRooted) {
         if (isRooted) {
@@ -305,8 +315,6 @@ fun TweaksScreen(
                                             } else {
                                                 isRgbExecuting = true
                                                 RootUtils.runAsRoot("pkill -f custom_led.sh || true")
-                                                scriptFile.writeText(TweakCommands.RGB_SCRIPT)
-                                                RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
                                                 RootUtils.runAsRoot("${scriptFile.absolutePath} &")
                                             }
                                         }
