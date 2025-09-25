@@ -159,6 +159,20 @@ fun TweaksScreen(
     var isPanelScalingEnabled by rememberSaveable { mutableStateOf(false) }
     var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
 
+    // Fix for vrshell hanging with domain blocker on
+    val runCommandWithWifiToggleIfNeeded: suspend (String) -> Unit = { command ->
+        val needsFix = isBlockerEnabled && command.contains("am force-stop com.oculus.vrshell")
+        if (needsFix) {
+            val chainedCommand = """
+                svc wifi disable
+                $command
+                svc wifi enable
+            """.trimIndent()
+            RootUtils.runAsRoot(chainedCommand)
+        } else {
+            RootUtils.runAsRoot(command)
+        }
+    }
 
     // --- LaunchedEffect for periodic CPU monitoring ---
     LaunchedEffect(isRooted) {
@@ -418,7 +432,7 @@ fun TweaksScreen(
                         Button(
                             onClick = {
                                 coroutineScope.launch {
-                                    RootUtils.runAsRoot(TweakCommands.FIX_PASSTHROUGH)
+                                    runCommandWithWifiToggleIfNeeded(TweakCommands.FIX_PASSTHROUGH)
                                 }
                             },
                             enabled = isRooted
@@ -440,7 +454,7 @@ fun TweaksScreen(
                                     uiSwitchState = if (isNavigator) 1 else 0
                                     coroutineScope.launch {
                                         val command = if (isNavigator) TweakCommands.SET_UI_NAVIGATOR else TweakCommands.SET_UI_DOCK
-                                        RootUtils.runAsRoot(command)
+                                        runCommandWithWifiToggleIfNeeded(command)
                                         snackbarHostState.showSnackbar("Switched to ${if (isNavigator) "Navigator" else "Dock"} UI.")
                                     }
                                 },
@@ -457,7 +471,7 @@ fun TweaksScreen(
                                     isVoidTransitionEnabled = isEnabled
                                     coroutineScope.launch {
                                         val command = if (isEnabled) TweakCommands.SET_TRANSITION_VOID else TweakCommands.SET_TRANSITION_IMMERSIVE
-                                        RootUtils.runAsRoot(command)
+                                        runCommandWithWifiToggleIfNeeded(command)
                                         snackbarHostState.showSnackbar(if (isEnabled) "Void Transition Enabled." else "Immersive Transition Enabled.")
                                     }
                                 },
@@ -486,7 +500,7 @@ fun TweaksScreen(
                                 isNavigatorFogEnabled = isEnabled
                                 coroutineScope.launch {
                                     val command = if (isEnabled) TweakCommands.ENABLE_NAVIGATOR_FOG else TweakCommands.DISABLE_NAVIGATOR_FOG
-                                    RootUtils.runAsRoot(command)
+                                    runCommandWithWifiToggleIfNeeded(command)
                                     snackbarHostState.showSnackbar(if (isEnabled) "Navigator Fog Enabled." else "Navigator Fog Disabled.")
                                 }
                             },
@@ -500,7 +514,7 @@ fun TweaksScreen(
                                 isPanelScalingEnabled = isEnabled
                                 coroutineScope.launch {
                                     val command = if (isEnabled) TweakCommands.ENABLE_PANEL_SCALING else TweakCommands.DISABLE_PANEL_SCALING
-                                    RootUtils.runAsRoot(command)
+                                    runCommandWithWifiToggleIfNeeded(command)
                                     snackbarHostState.showSnackbar(if (isEnabled) "Panel Scaling Enabled." else "Panel Scaling Disabled.")
                                 }
                             },
@@ -514,7 +528,7 @@ fun TweaksScreen(
                                 isInfinitePanelsEnabled = isEnabled
                                 coroutineScope.launch {
                                     val command = if (isEnabled) TweakCommands.ENABLE_INFINITE_PANELS else TweakCommands.DISABLE_INFINITE_PANELS
-                                    RootUtils.runAsRoot(command)
+                                    runCommandWithWifiToggleIfNeeded(command)
                                     snackbarHostState.showSnackbar(if (isEnabled) "Infinite Panels Enabled." else "Infinite Panels Disabled.")
                                 }
                             },
@@ -719,14 +733,13 @@ done
     const val ENABLE_INFINITE_PANELS = "oculuspreferences --setc debug_infinite_spatial_panels_enabled true\nam force-stop com.oculus.vrshell"
     const val DISABLE_INFINITE_PANELS = "oculuspreferences --setc debug_infinite_spatial_panels_enabled false\nam force-stop com.oculus.vrshell"
 
-    // Command to fix the double-tap passthrough feature after rooting.
+    // Command to fix the double-tap passthrough feature. Wifi toggle is handled by the wrapper function.
     val FIX_PASSTHROUGH = """
     PIDS=${'$'}(dumpsys sensorservice | grep -o "unknown_package_pid_[0-9]*" | sed 's/unknown_package_pid_//' | sort -u)
       for pid in ${'$'}PIDS; do
         kill ${'$'}pid
       done
     am force-stop com.oculus.vrshell
-    sleep 15
     am startservice com.oculus.guardian/com.oculus.vrguardianservice.VrGuardianService
     am start -n com.veygax.eventhorizon/.ui.activities.MainActivity
     """.trimIndent()
