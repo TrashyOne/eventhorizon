@@ -38,8 +38,11 @@ import com.veygax.eventhorizon.system.DnsBlockerService
 import com.veygax.eventhorizon.utils.CpuMonitorInfo
 import com.veygax.eventhorizon.utils.CpuUtils
 import com.veygax.eventhorizon.utils.RootUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class TweaksActivity : ComponentActivity() {
@@ -159,12 +162,39 @@ fun TweaksScreen(
     var isPanelScalingEnabled by rememberSaveable { mutableStateOf(false) }
     var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
 
+    // Fix for vrshell hanging with domain blocker on
+    val runCommandWithWifiToggleIfNeeded: suspend (String) -> Unit = { command ->
+        val needsFix = isBlockerEnabled && command.contains("am force-stop com.oculus.vrshell")
+        if (needsFix) {
+            val chainedCommand = """
+                svc wifi disable
+                $command
+                svc wifi enable
+            """.trimIndent()
+            RootUtils.runAsRoot(chainedCommand)
+        } else {
+            RootUtils.runAsRoot(command)
+        }
+    }
+
+    // Prepare the script file in the background on startup
+    LaunchedEffect(Unit) {
+        launch(Dispatchers.IO) {
+            if (!scriptFile.exists()) {
+                scriptFile.writeText(TweakCommands.RGB_SCRIPT)
+                RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
+            }
+        }
+    }
 
     // --- LaunchedEffect for periodic CPU monitoring ---
     LaunchedEffect(isRooted) {
         if (isRooted) {
             while (true) {
-                cpuMonitorInfo = CpuUtils.getCpuMonitorInfo()
+                // Run on a background thread to avoid blocking UI
+                withContext(Dispatchers.IO) {
+                    cpuMonitorInfo = CpuUtils.getCpuMonitorInfo()
+                }
                 delay(2000) // Refresh every 2 seconds
             }
         }
@@ -177,18 +207,10 @@ fun TweaksScreen(
                 isBlockerEnabled = isDnsServiceRunning()
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
                 if (isRooted) {
-                    coroutineScope.launch {
+                    // Launch on a background thread to keep UI responsive
+                    coroutineScope.launch(Dispatchers.IO) {
                         val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
                         isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
-                        
-                        val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
-                        isMinFreqExecuting = runningCpu.trim().isNotEmpty() && !runningCpu.contains("No such file")
-
-                        val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-                        isCpuPerfMode = cpuGov.trim() == "performance"
-                        val adbPort = RootUtils.runAsRoot("getprop service.adb.tcp.port").trim()
-                        isWirelessAdbEnabled = adbPort == "5555"
-                        
                         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                         @Suppress("DEPRECATION")
                         val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
@@ -205,36 +227,35 @@ fun TweaksScreen(
 
 
     LaunchedEffect(isRooted) {
-        isBlockerEnabled = isDnsServiceRunning()
         if (isRooted) {
-            val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
-            isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
+            // Perform all heavy operations on a background thread
+            withContext(Dispatchers.IO) {
+                isBlockerEnabled = isDnsServiceRunning()
+                
+                // Launch all checks in parallel using async for significant speed improvement
+                val runningRgbDeferred = async { RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep") }
+                val runningCpuDeferred = async { RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep") }
+                val cpuGovDeferred = async { RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") }
+                val adbPortDeferred = async { RootUtils.runAsRoot("getprop service.adb.tcp.port") }
+                val uiStateValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state") }
+                val transitionValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled") }
+                val teleportValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere") }
+                val fogValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled") }
+                val panelScalingValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc panel_scaling") }
+                val infinitePanelsValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled") }
 
-            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
-            isMinFreqExecuting = runningCpu.trim().isNotEmpty() && !runningCpu.contains("No such file")
-            
-            val cpuGov = RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-            isCpuPerfMode = cpuGov.trim() == "performance"
-            val adbPort = RootUtils.runAsRoot("getprop service.adb.tcp.port").trim()
-            isWirelessAdbEnabled = adbPort == "5555"
-
-            val uiStateValue = RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state")
-            uiSwitchState = if (uiStateValue.contains(": 1")) 1 else 0
-            
-            val transitionValue = RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled")
-            isVoidTransitionEnabled = transitionValue.contains(": false")
-
-            val teleportValue = RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere")
-            isTeleportLimitDisabled = teleportValue.contains(": true")
-
-            val fogValue = RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled")
-            isNavigatorFogEnabled = fogValue.contains(": false")
-
-            val panelScalingValue = RootUtils.runAsRoot("oculuspreferences --getc panel_scaling")
-            isPanelScalingEnabled = panelScalingValue.contains(": true")
-
-            val infinitePanelsValue = RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled")
-            isInfinitePanelsEnabled = infinitePanelsValue.contains(": true")
+                // Now, wait for all the results (await) and update the UI states
+                isRgbExecuting = runningRgbDeferred.await().trim().isNotEmpty()
+                isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
+                isCpuPerfMode = cpuGovDeferred.await().trim() == "performance"
+                isWirelessAdbEnabled = adbPortDeferred.await().trim() == "5555"
+                uiSwitchState = if (uiStateValueDeferred.await().contains(": 1")) 1 else 0
+                isVoidTransitionEnabled = transitionValueDeferred.await().contains(": false")
+                isTeleportLimitDisabled = teleportValueDeferred.await().contains(": true")
+                isNavigatorFogEnabled = fogValueDeferred.await().contains(": false")
+                isPanelScalingEnabled = panelScalingValueDeferred.await().contains(": true")
+                isInfinitePanelsEnabled = infinitePanelsValueDeferred.await().contains(": true")
+            }
         }
     }
 
@@ -284,7 +305,8 @@ fun TweaksScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        coroutineScope.launch {
+                                        // Launch on background thread
+                                        coroutineScope.launch(Dispatchers.IO) {
                                             sharedPrefs.edit().putBoolean("custom_led_active", false).apply()
                                             if (isRgbExecuting) {
                                                 isRgbExecuting = false
@@ -293,8 +315,6 @@ fun TweaksScreen(
                                             } else {
                                                 isRgbExecuting = true
                                                 RootUtils.runAsRoot("pkill -f custom_led.sh || true")
-                                                scriptFile.writeText(TweakCommands.RGB_SCRIPT)
-                                                RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
                                                 RootUtils.runAsRoot("${scriptFile.absolutePath} &")
                                             }
                                         }
@@ -304,13 +324,17 @@ fun TweaksScreen(
 
                                 Button(
                                     onClick = {
-                                        coroutineScope.launch {
+                                        // Launch on background thread
+                                        coroutineScope.launch(Dispatchers.IO) {
                                             if (isRgbExecuting) {
                                                 isRgbExecuting = false
                                                 RootUtils.runAsRoot("pkill -f rgb_led.sh || pkill -f custom_led.sh")
                                                 RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
                                             }
-                                            activity.launchCustomColorPicker()
+                                            // UI operation should be on main thread
+                                            withContext(Dispatchers.Main) {
+                                                activity.launchCustomColorPicker()
+                                            }
                                         }
                                     },
                                     enabled = isRooted
@@ -372,11 +396,14 @@ fun TweaksScreen(
                                 checked = isWirelessAdbEnabled,
                                 onCheckedChange = { isEnabled ->
                                     isWirelessAdbEnabled = isEnabled
-                                    coroutineScope.launch {
+                                    // Launch on background thread
+                                    coroutineScope.launch(Dispatchers.IO) {
                                         val port = if (isEnabled) "5555" else "-1"
                                         RootUtils.runAsRoot("setprop service.adb.tcp.port $port")
                                         RootUtils.runAsRoot("stop adbd && start adbd")
-                                        snackbarHostState.showSnackbar(if (isEnabled) "Wireless ADB Enabled." else "Wireless ADB Disabled.")
+                                        withContext(Dispatchers.Main) {
+                                            snackbarHostState.showSnackbar(if (isEnabled) "Wireless ADB Enabled." else "Wireless ADB Disabled.")
+                                        }
                                     }
                                 },
                                 enabled = isRooted
@@ -388,18 +415,17 @@ fun TweaksScreen(
                             checked = isInterceptorEnabled,
                             onCheckedChange = { isEnabled ->
                                 isInterceptorEnabled = isEnabled
-                                // Save the setting so the BootReceiver can read it and the state persists.
                                 sharedPrefs.edit().putBoolean("intercept_startup_apps", isEnabled).apply()
 
-                                coroutineScope.launch {
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
                                     if (isEnabled) {
-                                        // Start the watchdog script
                                         AppInterceptor.start(context)
-                                        snackbarHostState.showSnackbar("App Interceptor Enabled.")
                                     } else {
-                                        // Stop the watchdog script
                                         AppInterceptor.stop()
-                                        snackbarHostState.showSnackbar("App Interceptor Disabled.")
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        snackbarHostState.showSnackbar(if (isEnabled) "App Interceptor Enabled." else "App Interceptor Disabled.")
                                     }
                                 }
                             },
@@ -410,15 +436,11 @@ fun TweaksScreen(
                         title = "Fix Double-Tap Passthrough",
                         description = "Applies fix for broken Double-Tap Passthrough feature."
                     ) {
-                        var isRooted by remember { mutableStateOf(false) }
-                        LaunchedEffect(Unit) {
-                            isRooted = RootUtils.isRootAvailable()
-                        }
-
                         Button(
                             onClick = {
-                                coroutineScope.launch {
-                                    RootUtils.runAsRoot(TweakCommands.FIX_PASSTHROUGH)
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    runCommandWithWifiToggleIfNeeded(TweakCommands.FIX_PASSTHROUGH)
                                 }
                             },
                             enabled = isRooted
@@ -438,10 +460,10 @@ fun TweaksScreen(
                                 checked = uiSwitchState == 1,
                                 onCheckedChange = { isNavigator ->
                                     uiSwitchState = if (isNavigator) 1 else 0
-                                    coroutineScope.launch {
+                                    // Launch on background thread
+                                    coroutineScope.launch(Dispatchers.IO) {
                                         val command = if (isNavigator) TweakCommands.SET_UI_NAVIGATOR else TweakCommands.SET_UI_DOCK
-                                        RootUtils.runAsRoot(command)
-                                        snackbarHostState.showSnackbar("Switched to ${if (isNavigator) "Navigator" else "Dock"} UI.")
+                                        runCommandWithWifiToggleIfNeeded(command)
                                     }
                                 },
                                 enabled = isRooted
@@ -455,10 +477,10 @@ fun TweaksScreen(
                                 checked = isVoidTransitionEnabled,
                                 onCheckedChange = { isEnabled ->
                                     isVoidTransitionEnabled = isEnabled
-                                    coroutineScope.launch {
+                                    // Launch on background thread
+                                    coroutineScope.launch(Dispatchers.IO) {
                                         val command = if (isEnabled) TweakCommands.SET_TRANSITION_VOID else TweakCommands.SET_TRANSITION_IMMERSIVE
-                                        RootUtils.runAsRoot(command)
-                                        snackbarHostState.showSnackbar(if (isEnabled) "Void Transition Enabled." else "Immersive Transition Enabled.")
+                                        runCommandWithWifiToggleIfNeeded(command)
                                     }
                                 },
                                 enabled = isRooted
@@ -470,10 +492,13 @@ fun TweaksScreen(
                             checked = isTeleportLimitDisabled,
                             onCheckedChange = { isEnabled ->
                                 isTeleportLimitDisabled = isEnabled
-                                coroutineScope.launch {
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.DISABLE_TELEPORT_LIMIT else TweakCommands.ENABLE_TELEPORT_LIMIT
                                     RootUtils.runAsRoot(command)
-                                    snackbarHostState.showSnackbar(if (isEnabled) "Teleport Anywhere Enabled." else "Teleport Anywhere Disabled.")
+                                    withContext(Dispatchers.Main) {
+                                        snackbarHostState.showSnackbar(if (isEnabled) "Teleport Anywhere Enabled." else "Teleport Anywhere Disabled.")
+                                    }
                                 }
                             },
                             enabled = isRooted
@@ -484,10 +509,10 @@ fun TweaksScreen(
                             checked = isNavigatorFogEnabled,
                             onCheckedChange = { isEnabled ->
                                 isNavigatorFogEnabled = isEnabled
-                                coroutineScope.launch {
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.ENABLE_NAVIGATOR_FOG else TweakCommands.DISABLE_NAVIGATOR_FOG
-                                    RootUtils.runAsRoot(command)
-                                    snackbarHostState.showSnackbar(if (isEnabled) "Navigator Fog Enabled." else "Navigator Fog Disabled.")
+                                    runCommandWithWifiToggleIfNeeded(command)
                                 }
                             },
                             enabled = isRooted
@@ -498,10 +523,10 @@ fun TweaksScreen(
                             checked = isPanelScalingEnabled,
                             onCheckedChange = { isEnabled ->
                                 isPanelScalingEnabled = isEnabled
-                                coroutineScope.launch {
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.ENABLE_PANEL_SCALING else TweakCommands.DISABLE_PANEL_SCALING
-                                    RootUtils.runAsRoot(command)
-                                    snackbarHostState.showSnackbar(if (isEnabled) "Panel Scaling Enabled." else "Panel Scaling Disabled.")
+                                    runCommandWithWifiToggleIfNeeded(command)
                                 }
                             },
                             enabled = isRooted
@@ -512,10 +537,10 @@ fun TweaksScreen(
                             checked = isInfinitePanelsEnabled,
                             onCheckedChange = { isEnabled ->
                                 isInfinitePanelsEnabled = isEnabled
-                                coroutineScope.launch {
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.ENABLE_INFINITE_PANELS else TweakCommands.DISABLE_INFINITE_PANELS
-                                    RootUtils.runAsRoot(command)
-                                    snackbarHostState.showSnackbar(if (isEnabled) "Infinite Panels Enabled." else "Infinite Panels Disabled.")
+                                    runCommandWithWifiToggleIfNeeded(command)
                                 }
                             },
                             enabled = isRooted
@@ -598,10 +623,10 @@ fun TweaksScreen(
                             Spacer(Modifier.height(8.dp))
                             Button(
                                 onClick = {
-                                    val shouldStart = !isMinFreqExecuting
-                                    isMinFreqExecuting = shouldStart
-
-                                    coroutineScope.launch {
+                                    // Launch on background thread
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val shouldStart = !isMinFreqExecuting
+                                        isMinFreqExecuting = shouldStart
                                         try {
                                             if (shouldStart) {
                                                 CpuUtils.startMinFreqLock(context)
@@ -624,7 +649,8 @@ fun TweaksScreen(
                                 checked = isCpuPerfMode,
                                 onCheckedChange = { isEnabled ->
                                     isCpuPerfMode = isEnabled
-                                    coroutineScope.launch {
+                                    // Launch on background thread
+                                    coroutineScope.launch(Dispatchers.IO) {
                                         val governor = if (isEnabled) "performance" else "schedutil"
                                         val command = (0..5).joinToString("\n") {
                                             """
@@ -634,7 +660,9 @@ fun TweaksScreen(
                                             """.trimIndent()
                                         }
                                         RootUtils.runAsRoot(command)
-                                        snackbarHostState.showSnackbar("CPU Governor set to $governor.")
+                                        withContext(Dispatchers.Main) {
+                                            snackbarHostState.showSnackbar("CPU Governor set to $governor.")
+                                        }
                                     }
                                 },
                                 enabled = isRooted
@@ -719,14 +747,13 @@ done
     const val ENABLE_INFINITE_PANELS = "oculuspreferences --setc debug_infinite_spatial_panels_enabled true\nam force-stop com.oculus.vrshell"
     const val DISABLE_INFINITE_PANELS = "oculuspreferences --setc debug_infinite_spatial_panels_enabled false\nam force-stop com.oculus.vrshell"
 
-    // Command to fix the double-tap passthrough feature after rooting.
+    // Command to fix the double-tap passthrough feature. Wifi toggle is handled by the wrapper function.
     val FIX_PASSTHROUGH = """
     PIDS=${'$'}(dumpsys sensorservice | grep -o "unknown_package_pid_[0-9]*" | sed 's/unknown_package_pid_//' | sort -u)
       for pid in ${'$'}PIDS; do
         kill ${'$'}pid
       done
     am force-stop com.oculus.vrshell
-    sleep 15
     am startservice com.oculus.guardian/com.oculus.vrguardianservice.VrGuardianService
     am start -n com.veygax.eventhorizon/.ui.activities.MainActivity
     """.trimIndent()
