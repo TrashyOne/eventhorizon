@@ -124,6 +124,7 @@ fun LedColorScreen() {
                     editor.putBoolean("custom_led_on_boot", isEnabled)
                     if (isEnabled) {
                         editor.putBoolean("rgb_on_boot", false)
+                        editor.putBoolean("power_led_on_boot", false)
                     }
                     editor.apply()
                 })

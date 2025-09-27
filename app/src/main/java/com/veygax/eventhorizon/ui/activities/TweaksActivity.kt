@@ -50,7 +50,7 @@ import java.io.File
 
 class TweaksActivity : ComponentActivity() {
 
-    var isRgbExecutingState = mutableStateOf(false) 
+    var isRainbowLedActiveState = mutableStateOf(false)
     var isCustomLedActiveState = mutableStateOf(false)
 
     private val vpnPermissionLauncher = registerForActivityResult(
@@ -66,7 +66,7 @@ class TweaksActivity : ComponentActivity() {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             // This immediately updates the UI to show the "Stop" button.
-            isRgbExecutingState.value = true
+            isRainbowLedActiveState.value = true
             isCustomLedActiveState.value = true
         }
     }
@@ -150,8 +150,10 @@ fun TweaksScreen(
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
-    var isRgbExecuting by activity.isRgbExecutingState 
+    var isRainbowLedActive by activity.isRainbowLedActiveState
     var isCustomLedActive by activity.isCustomLedActiveState
+    var isPowerLedActive by remember { mutableStateOf(false) }
+    var powerLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("power_led_on_boot", false)) }
 
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
     var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
@@ -184,7 +186,7 @@ fun TweaksScreen(
             override fun onReceive(context: Context?, intent: Intent?) {
                 // When the message is received, optimistically update all UI states to "off".
                 if (intent?.action == TweakService.BROADCAST_TWEAKS_STOPPED) {
-                    isRgbExecuting = false
+                    isRainbowLedActive = false
                     isCustomLedActive = false
                     isMinFreqExecuting = false
                     isInterceptorEnabled = false
@@ -237,6 +239,7 @@ fun TweaksScreen(
                 // Launch all checks in parallel using async for speed
                 val runningRgbDeferred = async { RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep") }
                 val runningCustomDeferred = async { RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep") }
+                val runningPowerLedDeferred = async { RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep") }
                 val runningCpuDeferred = async { RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep") }
                 val runningInterceptorDeferred = async { RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") } 
 
@@ -251,7 +254,7 @@ fun TweaksScreen(
 
                 // Wait for all the results and update the UI states
                 isCustomLedActive = runningCustomDeferred.await().trim().isNotEmpty()
-                isRgbExecuting = isCustomLedActive || runningRgbDeferred.await().trim().isNotEmpty()
+                isRainbowLedActive = isCustomLedActive || runningRgbDeferred.await().trim().isNotEmpty()
                 
                 isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
                 isInterceptorEnabled = runningInterceptorDeferred.await().trim().isNotEmpty() 
@@ -282,16 +285,19 @@ fun TweaksScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 isBlockerEnabled = isDnsServiceRunning()
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
+                powerLedOnBoot = sharedPrefs.getBoolean("power_led_on_boot", false)
                 if (isRooted) {
                     // Re-check all states on resume
                     coroutineScope.launch(Dispatchers.IO) {
                         val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep")
                         val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep")
+                        val runningPowerLed = RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep")
                         
                         // Update UI states on the main dispatcher or compose thread
                         withContext(Dispatchers.Main) {
+                            isRainbowLedActive = isCustomLedActive || runningRgb.trim().isNotEmpty()
                             isCustomLedActive = runningCustom.trim().isNotEmpty()
-                            isRgbExecuting = isCustomLedActive || runningRgb.trim().isNotEmpty()
+                            isCustomLedActive = runningCustom.trim().isNotEmpty()
                             
                             val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
                             isMinFreqExecuting = runningCpu.trim().isNotEmpty()
@@ -349,7 +355,10 @@ fun TweaksScreen(
                                         val editor = sharedPrefs.edit()
                                         editor.putBoolean("rgb_on_boot", checked)
                                         if (checked) {
+                                            // When Rainbow on boot is enabled, disable the others
                                             editor.putBoolean("custom_led_on_boot", false)
+                                            editor.putBoolean("power_led_on_boot", false)
+                                            powerLedOnBoot = false // Also update the local state
                                         }
                                         editor.apply()
                                         coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Rainbow LED on Boot Enabled" else "Rainbow LED on Boot Disabled") }
@@ -361,25 +370,24 @@ fun TweaksScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        // Use TweakService to manage the script lifecycle
-                                        coroutineScope.launch {
-                                            sharedPrefs.edit().putBoolean("custom_led_active", false).apply()
-                                            
-                                            if (isRgbExecuting) {
-                                                isRgbExecuting = false
-                                                isCustomLedActive = false
-                                                activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB) 
-                                                RootUtils.runAsRoot(TweakCommands.LEDS_OFF) 
-                                            } else {
-                                                isRgbExecuting = true
-                                                isCustomLedActive = false
-                                                activity.startTweakServiceAction(TweakService.ACTION_START_RGB) 
-                                            }
+                                        val shouldStart = !isRainbowLedActive
+                                        if (shouldStart) {
+                                            // Start Rainbow, which turns off the other LEDs
+                                            isRainbowLedActive = true
+                                            isCustomLedActive = false
+                                            isPowerLedActive = false // <-- This fixes the UI bug
+                                            activity.startTweakServiceAction(TweakService.ACTION_START_RGB)
+                                        } else {
+                                            // Stop Rainbow
+                                            isRainbowLedActive = false
+                                            isCustomLedActive = false
+                                            isPowerLedActive = false
+                                            activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
                                         }
                                     },
                                     enabled = isRooted
-                                ) { 
-                                    Text(if (isRgbExecuting) "Stop" else "Start") 
+                                ) {
+                                    Text(if (isRainbowLedActive) "Stop" else "Start")
                                 }
 
                                 Button(
@@ -399,6 +407,53 @@ fun TweaksScreen(
                                 ) {
                                     Text("Custom")
                                 }
+                            }
+                        }
+                    }
+                    TweakCard("Power Indicator LED", "Shows battery level with the LED color.") {
+                        Column(horizontalAlignment = Alignment.End) {
+                            // This Row adds the "Run on Boot" toggle with exclusivity logic
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.width(8.dp))
+                                Switch(
+                                    checked = powerLedOnBoot,
+                                    onCheckedChange = { isEnabled ->
+                                        powerLedOnBoot = isEnabled
+                                        val editor = sharedPrefs.edit()
+                                        editor.putBoolean("power_led_on_boot", isEnabled)
+                                        if (isEnabled) {
+                                            // When this is enabled, disable the other LED boot toggles
+                                            editor.putBoolean("rgb_on_boot", false)
+                                            editor.putBoolean("custom_led_on_boot", false)
+                                            runOnBoot = false // Update the local state for the Rainbow LED toggle
+                                        }
+                                        editor.apply()
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Power LED on Boot Enabled" else "Power LED on Boot Disabled") }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+
+                            Button(
+                                onClick = {
+                                    val shouldStart = !isPowerLedActive
+                                    if (shouldStart) {
+                                        // Start Power LED, turn others off in the UI
+                                        isPowerLedActive = true
+                                        isRainbowLedActive = false
+                                        isCustomLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_START_POWER_LED)
+                                    } else {
+                                        // Stop Power LED
+                                        isPowerLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_POWER_LED)
+                                    }
+                                },
+                                enabled = isRooted
+                            ) {
+                                Text(if (isPowerLedActive) "Stop" else "Start")
                             }
                         }
                     }
@@ -792,6 +847,51 @@ while true; do
     for i in ${'$'}(seq 0 5 255); do set_rgb ${'$'}(clamp ${'$'}{i}) 0 ${'$'}(clamp ${'$'}((255 - i))); sleep 0.005; done
 done
     """.trimIndent()
+
+    val POWER_LED_SCRIPT = """
+        #!/system/bin/sh
+
+        RED_LED="/sys/class/leds/red/brightness"
+        GREEN_LED="/sys/class/leds/green/brightness"
+        BLUE_LED="/sys/class/leds/blue/brightness"
+        BATTERY_PATH="/sys/class/power_supply/battery/capacity"
+
+        set_led() {
+            echo "${'$'}1" > "${'$'}RED_LED"
+            echo "${'$'}2" > "${'$'}GREEN_LED"
+            echo "${'$'}3" > "${'$'}BLUE_LED"
+        }
+
+        while true; do
+            battery_level=${'$'}(cat "${'$'}BATTERY_PATH")
+
+            if [ "${'$'}battery_level" -ge 95 ]; then
+                set_led 0 255 0
+            elif [ "${'$'}battery_level" -ge 90 ]; then
+                set_led 64 255 0
+            elif [ "${'$'}battery_level" -ge 80 ]; then
+                set_led 128 255 0
+            elif [ "${'$'}battery_level" -ge 70 ]; then
+                set_led 180 255 0
+            elif [ "${'$'}battery_level" -ge 60 ]; then
+                set_led 220 255 0
+            elif [ "${'$'}battery_level" -ge 50 ]; then
+                set_led 255 255 0
+            elif [ "${'$'}battery_level" -ge 40 ]; then
+                set_led 255 180 0
+            elif [ "${'$'}battery_level" -ge 30 ]; then
+                set_led 255 128 0
+            elif [ "${'$'}battery_level" -ge 20 ]; then
+                set_led 255 64 0
+            elif [ "${'$'}battery_level" -ge 10 ]; then
+                set_led 255 32 0
+            else
+                set_led 255 0 0
+            fi
+            sleep 5
+        done
+        """.trimIndent()
+
     const val DISABLE_TELEPORT_LIMIT = "oculuspreferences --setc shell_teleport_anywhere true"
     const val ENABLE_TELEPORT_LIMIT = "oculuspreferences --setc shell_teleport_anywhere false"
     const val ENABLE_NAVIGATOR_FOG = "oculuspreferences --setc navigator_background_disabled false\nam force-stop com.oculus.vrshell"

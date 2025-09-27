@@ -43,7 +43,6 @@ class TweakService : Service() {
                 esac
             done
         """.trimIndent()
-    private val INTERCEPTOR_SCRIPT_NAME = "interceptor.sh"
 
     companion object {
         const val ACTION_START_RGB = "com.veygax.eventhorizon.START_RGB"
@@ -54,7 +53,9 @@ class TweakService : Service() {
         const val ACTION_START_INTERCEPTOR = "com.veygax.eventhorizon.START_INTERCEPTOR"
         const val ACTION_STOP_INTERCEPTOR = "com.veygax.eventhorizon.STOP_INTERCEPTOR"
         const val ACTION_STOP_ALL = "com.veygax.eventhorizon.STOP_ALL"
-
+        const val ACTION_START_POWER_LED = "com.veygax.eventhorizon.START_POWER_LED"
+        const val ACTION_STOP_POWER_LED = "com.veygax.eventhorizon.STOP_POWER_LED"    
+        
         // This is the message the Activity will listen for.
         const val BROADCAST_TWEAKS_STOPPED = "com.veygax.eventhorizon.TWEAKS_STOPPED"
 
@@ -66,20 +67,23 @@ class TweakService : Service() {
     private var isRgbRunning: Boolean = false
     private var isCustomLedRunning: Boolean = false
     private var isMinFreqRunning: Boolean = false
-    private var isInterceptorRunning: Boolean = false 
+    private var isInterceptorRunning: Boolean = false
+    private var isPowerLedRunning: Boolean = false
     
     // Files for scripts
     private lateinit var rgbScriptFile: File
     private lateinit var customLedScriptFile: File
     private lateinit var minFreqScriptFile: File
     private lateinit var interceptorScriptFile: File
+    private lateinit var powerLedScriptFile: File
 
     override fun onCreate() {
         super.onCreate()
         rgbScriptFile = File(filesDir, "rgb_led.sh")
         customLedScriptFile = File(filesDir, "custom_led.sh")
+        powerLedScriptFile = File(filesDir, "power_led.sh")
         minFreqScriptFile = File(filesDir, CpuUtils.SCRIPT_NAME)
-        interceptorScriptFile = File(filesDir, INTERCEPTOR_SCRIPT_NAME)
+        interceptorScriptFile = File(filesDir, "interceptor.sh")
 
         // Initialize state robustly on service creation (to catch scripts running from boot)
         runBlocking(Dispatchers.IO) {
@@ -95,7 +99,7 @@ class TweakService : Service() {
         val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep").trim().isNotEmpty()
         val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep").trim().isNotEmpty()
         val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep").trim().isNotEmpty()
-        val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep $INTERCEPTOR_SCRIPT_NAME | grep -v grep").trim().isNotEmpty()
+        val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep").trim().isNotEmpty()
 
         isRgbRunning = runningRgb
         isCustomLedRunning = runningCustom
@@ -120,6 +124,8 @@ class TweakService : Service() {
                     val b = intent.getIntExtra("BLUE", 255)
                     startCustomLed(r, g, b)
                 }
+                ACTION_START_POWER_LED -> startPowerLed()
+                ACTION_STOP_POWER_LED -> stopPowerLed()
                 ACTION_START_MIN_FREQ -> startMinFreq()
                 ACTION_STOP_MIN_FREQ -> stopMinFreq()
                 ACTION_START_INTERCEPTOR -> startInterceptor() 
@@ -179,13 +185,30 @@ class TweakService : Service() {
         isCustomLedRunning = false
     }
 
-    private suspend fun stopAnyLed() {
-        RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
-        RootUtils.runAsRoot("pkill -f custom_led.sh || true")
-        RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
-        isRgbRunning = false
-        isCustomLedRunning = false
-    }
+private suspend fun startPowerLed() {
+    stopAnyLed()
+    powerLedScriptFile.writeText(TweakCommands.POWER_LED_SCRIPT) // This line creates the file
+    RootUtils.runAsRoot("chmod +x ${powerLedScriptFile.absolutePath}")
+    RootUtils.runAsRoot("${powerLedScriptFile.absolutePath} &")
+    isPowerLedRunning = true
+}
+
+private suspend fun stopPowerLed() {
+    RootUtils.runAsRoot("pkill -f power_led.sh || true")
+    RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+    isPowerLedRunning = false
+}
+
+// This function likely already exists, make sure it's up to date
+private suspend fun stopAnyLed() {
+    RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
+    RootUtils.runAsRoot("pkill -f custom_led.sh || true")
+    RootUtils.runAsRoot("pkill -f power_led.sh || true")
+    RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+    isRgbRunning = false
+    isCustomLedRunning = false
+    isPowerLedRunning = false // Verify this line is here
+}
 
     private suspend fun startMinFreq() {
         RootUtils.runAsRoot("pkill -f ${CpuUtils.SCRIPT_NAME} || true")
@@ -202,7 +225,7 @@ class TweakService : Service() {
     }
     
     private suspend fun startInterceptor() {
-        RootUtils.runAsRoot("pkill -f $INTERCEPTOR_SCRIPT_NAME || true")
+        RootUtils.runAsRoot("pkill -f interceptor.sh || true")
         interceptorScriptFile.writeText(INTERCEPTOR_SCRIPT)
         RootUtils.runAsRoot("chmod +x ${interceptorScriptFile.absolutePath}")
         RootUtils.runAsRoot("nohup ${interceptorScriptFile.absolutePath} > /dev/null 2>&1 &")
@@ -210,7 +233,7 @@ class TweakService : Service() {
     }
 
     private suspend fun stopInterceptor() {
-        RootUtils.runAsRoot("pkill -f $INTERCEPTOR_SCRIPT_NAME || true")
+        RootUtils.runAsRoot("pkill -f interceptor.sh || true")
         isInterceptorRunning = false
     }
     
@@ -311,8 +334,9 @@ class TweakService : Service() {
         runBlocking(Dispatchers.IO) {
             RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
             RootUtils.runAsRoot("pkill -f custom_led.sh || true")
+            RootUtils.runAsRoot("pkill -f power_led.sh || true")
             RootUtils.runAsRoot("pkill -f ${CpuUtils.SCRIPT_NAME} || true")
-            RootUtils.runAsRoot("pkill -f $INTERCEPTOR_SCRIPT_NAME || true")
+            RootUtils.runAsRoot("pkill -f interceptor.sh || true")
         }
     }
 
