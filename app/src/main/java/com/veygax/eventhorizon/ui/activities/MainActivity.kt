@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,7 +113,7 @@ class MainActivity : ComponentActivity() {
         else -> 0
     }
 
-    private fun getVersionIncremental() = Build.VERSION.INCREMENTAL.toLong()
+    fun getVersionIncremental() = Build.VERSION.INCREMENTAL.toLong()
 
     @RequiresApi(Build.VERSION_CODES.O)
     fun executeExploit(
@@ -303,7 +304,7 @@ fun EventHorizonApp(
         ListItem(
             headlineContent = { Text("Root Status") },
             supportingContent = {
-                Text(if (isRooted) "Root Access Granted" else "Root not available")
+                Text(if (isRooted) "Root Access Granted" else "Root not Granted")
             },
             leadingContent = {
                 Icon(
@@ -331,7 +332,8 @@ fun EventHorizonApp(
                     onCheckedChange = { checked ->
                         rootOnBoot = checked
                         sharedPrefs.edit().putBoolean("root_on_boot", checked).apply()
-                    }
+                    },
+                    enabled = !mainActivity.isPatched()
                 )
             }
         )
@@ -347,13 +349,18 @@ fun EventHorizonApp(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "⚠️ exploit patched on this device",
-                        style = MaterialTheme.typography.bodyLarge,
+                        text = "⚠️ Exploit is patched on this device",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                     Text(
-                        text = "the exploit will NOT work.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "The exploit will NOT work on this firmware version",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "Current Firmware: ${mainActivity.getVersionIncremental()}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
@@ -373,7 +380,7 @@ fun EventHorizonApp(
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isProcessRunning && !isRooted
+            enabled = !isProcessRunning && !isRooted && !mainActivity.isPatched()
         ) {
             Text(if (isProcessRunning) "Rooting..." else "Root Now")
         }
