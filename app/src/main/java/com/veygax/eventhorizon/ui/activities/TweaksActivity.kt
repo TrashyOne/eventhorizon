@@ -2,8 +2,10 @@ package com.veygax.eventhorizon.ui.activities
 
 import android.app.Activity
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -33,8 +35,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.veygax.eventhorizon.core.AppInterceptor
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.veygax.eventhorizon.system.DnsBlockerService
+import com.veygax.eventhorizon.system.TweakService
 import com.veygax.eventhorizon.utils.CpuMonitorInfo
 import com.veygax.eventhorizon.utils.CpuUtils
 import com.veygax.eventhorizon.utils.RootUtils
@@ -47,7 +50,8 @@ import java.io.File
 
 class TweaksActivity : ComponentActivity() {
 
-    var isRgbExecutingState = mutableStateOf(false)
+    var isRgbExecutingState = mutableStateOf(false) 
+    var isCustomLedActiveState = mutableStateOf(false)
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -61,7 +65,9 @@ class TweaksActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
+            // This immediately updates the UI to show the "Stop" button.
             isRgbExecutingState.value = true
+            isCustomLedActiveState.value = true
         }
     }
 
@@ -86,6 +92,14 @@ class TweaksActivity : ComponentActivity() {
     
     fun launchCustomColorPicker() {
         ledColorLauncher.launch(Intent(this, LedColorActivity::class.java))
+    }
+    
+    fun startTweakServiceAction(action: String, intentModifier: (Intent) -> Unit = {}) {
+        val intent = Intent(this, TweakService::class.java).apply {
+            this.action = action
+            intentModifier(this)
+        }
+        startService(intent)
     }
 
     private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
@@ -136,8 +150,9 @@ fun TweaksScreen(
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
-    var isRgbExecuting by activity.isRgbExecutingState
-    
+    var isRgbExecuting by activity.isRgbExecutingState 
+    var isCustomLedActive by activity.isCustomLedActiveState
+
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
     var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
     var isBlockerEnabled by remember { mutableStateOf(false) }
@@ -161,6 +176,32 @@ fun TweaksScreen(
     var isNavigatorFogEnabled by rememberSaveable { mutableStateOf(false) }
     var isPanelScalingEnabled by rememberSaveable { mutableStateOf(false) }
     var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
+
+    // This effect listens for the "stop all" message from the TweakService.
+    // It ensures the UI updates even when the action is triggered from the notification.
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                // When the message is received, optimistically update all UI states to "off".
+                if (intent?.action == TweakService.BROADCAST_TWEAKS_STOPPED) {
+                    isRgbExecuting = false
+                    isCustomLedActive = false
+                    isMinFreqExecuting = false
+                    isInterceptorEnabled = false
+                }
+            }
+        }
+        
+        // Register the receiver to listen for our specific action
+        LocalBroadcastManager.getInstance(context).registerReceiver(
+            receiver, IntentFilter(TweakService.BROADCAST_TWEAKS_STOPPED)
+        )
+
+        // The onDispose block is crucial for cleanup when the composable leaves the screen.
+        onDispose {
+            LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver)
+        }
+    }
 
     // Fix for vrshell hanging with domain blocker on
     val runCommandWithWifiToggleIfNeeded: suspend (String) -> Unit = { command ->
@@ -187,9 +228,44 @@ fun TweaksScreen(
         }
     }
 
-    // --- LaunchedEffect for periodic CPU monitoring ---
     LaunchedEffect(isRooted) {
         if (isRooted) {
+            // Initial state check on startup
+            withContext(Dispatchers.IO) {
+                isBlockerEnabled = isDnsServiceRunning()
+                
+                // Launch all checks in parallel using async for speed
+                val runningRgbDeferred = async { RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep") }
+                val runningCustomDeferred = async { RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep") }
+                val runningCpuDeferred = async { RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep") }
+                val runningInterceptorDeferred = async { RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") } 
+
+                val cpuGovDeferred = async { RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") }
+                val adbPortDeferred = async { RootUtils.runAsRoot("getprop service.adb.tcp.port") }
+                val uiStateValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state") }
+                val transitionValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled") }
+                val teleportValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere") }
+                val fogValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled") }
+                val panelScalingValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc panel_scaling") }
+                val infinitePanelsValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled") }
+
+                // Wait for all the results and update the UI states
+                isCustomLedActive = runningCustomDeferred.await().trim().isNotEmpty()
+                isRgbExecuting = isCustomLedActive || runningRgbDeferred.await().trim().isNotEmpty()
+                
+                isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
+                isInterceptorEnabled = runningInterceptorDeferred.await().trim().isNotEmpty() 
+                
+                isCpuPerfMode = cpuGovDeferred.await().trim() == "performance"
+                isWirelessAdbEnabled = adbPortDeferred.await().trim() == "5555"
+                uiSwitchState = if (uiStateValueDeferred.await().contains(": 1")) 1 else 0
+                isVoidTransitionEnabled = transitionValueDeferred.await().contains(": false")
+                isTeleportLimitDisabled = teleportValueDeferred.await().contains(": true")
+                isNavigatorFogEnabled = fogValueDeferred.await().contains(": false")
+                isPanelScalingEnabled = panelScalingValueDeferred.await().contains(": true")
+                isInfinitePanelsEnabled = infinitePanelsValueDeferred.await().contains(": true")
+            }
+            
             while (true) {
                 // Run on a background thread to avoid blocking UI
                 withContext(Dispatchers.IO) {
@@ -207,10 +283,23 @@ fun TweaksScreen(
                 isBlockerEnabled = isDnsServiceRunning()
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
                 if (isRooted) {
-                    // Launch on a background thread to keep UI responsive
+                    // Re-check all states on resume
                     coroutineScope.launch(Dispatchers.IO) {
-                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep")
-                        isRgbExecuting = runningRgb.trim().isNotEmpty() && !runningRgb.contains("No such file")
+                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep")
+                        val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep")
+                        
+                        // Update UI states on the main dispatcher or compose thread
+                        withContext(Dispatchers.Main) {
+                            isCustomLedActive = runningCustom.trim().isNotEmpty()
+                            isRgbExecuting = isCustomLedActive || runningRgb.trim().isNotEmpty()
+                            
+                            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
+                            isMinFreqExecuting = runningCpu.trim().isNotEmpty()
+                            val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") 
+                            isInterceptorEnabled = runningInterceptor.trim().isNotEmpty()
+                        }
+
+
                         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                         @Suppress("DEPRECATION")
                         val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
@@ -225,39 +314,6 @@ fun TweaksScreen(
         }
     }
 
-
-    LaunchedEffect(isRooted) {
-        if (isRooted) {
-            // Perform all heavy operations on a background thread
-            withContext(Dispatchers.IO) {
-                isBlockerEnabled = isDnsServiceRunning()
-                
-                // Launch all checks in parallel using async for significant speed improvement
-                val runningRgbDeferred = async { RootUtils.runAsRoot("ps -ef | grep -E 'rgb_led.sh|custom_led.sh' | grep -v grep") }
-                val runningCpuDeferred = async { RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep") }
-                val cpuGovDeferred = async { RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") }
-                val adbPortDeferred = async { RootUtils.runAsRoot("getprop service.adb.tcp.port") }
-                val uiStateValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state") }
-                val transitionValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled") }
-                val teleportValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere") }
-                val fogValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled") }
-                val panelScalingValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc panel_scaling") }
-                val infinitePanelsValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled") }
-
-                // Now, wait for all the results (await) and update the UI states
-                isRgbExecuting = runningRgbDeferred.await().trim().isNotEmpty()
-                isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
-                isCpuPerfMode = cpuGovDeferred.await().trim() == "performance"
-                isWirelessAdbEnabled = adbPortDeferred.await().trim() == "5555"
-                uiSwitchState = if (uiStateValueDeferred.await().contains(": 1")) 1 else 0
-                isVoidTransitionEnabled = transitionValueDeferred.await().contains(": false")
-                isTeleportLimitDisabled = teleportValueDeferred.await().contains(": true")
-                isNavigatorFogEnabled = fogValueDeferred.await().contains(": false")
-                isPanelScalingEnabled = panelScalingValueDeferred.await().contains(": true")
-                isInfinitePanelsEnabled = infinitePanelsValueDeferred.await().contains(": true")
-            }
-        }
-    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -305,32 +361,34 @@ fun TweaksScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        // Launch on background thread
-                                        coroutineScope.launch(Dispatchers.IO) {
+                                        // Use TweakService to manage the script lifecycle
+                                        coroutineScope.launch {
                                             sharedPrefs.edit().putBoolean("custom_led_active", false).apply()
+                                            
                                             if (isRgbExecuting) {
                                                 isRgbExecuting = false
-                                                RootUtils.runAsRoot("pkill -f rgb_led.sh || pkill -f custom_led.sh")
-                                                RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+                                                isCustomLedActive = false
+                                                activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB) 
+                                                RootUtils.runAsRoot(TweakCommands.LEDS_OFF) 
                                             } else {
                                                 isRgbExecuting = true
-                                                RootUtils.runAsRoot("pkill -f custom_led.sh || true")
-                                                RootUtils.runAsRoot("${scriptFile.absolutePath} &")
+                                                isCustomLedActive = false
+                                                activity.startTweakServiceAction(TweakService.ACTION_START_RGB) 
                                             }
                                         }
                                     },
                                     enabled = isRooted
-                                ) { Text(if (isRgbExecuting) "Stop" else "Start") }
+                                ) { 
+                                    Text(if (isRgbExecuting) "Stop" else "Start") 
+                                }
 
                                 Button(
                                     onClick = {
                                         // Launch on background thread
                                         coroutineScope.launch(Dispatchers.IO) {
-                                            if (isRgbExecuting) {
-                                                isRgbExecuting = false
-                                                RootUtils.runAsRoot("pkill -f rgb_led.sh || pkill -f custom_led.sh")
-                                                RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
-                                            }
+                                            // Stop current LED script via service action before launching the picker
+                                            activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
+                                            
                                             // UI operation should be on main thread
                                             withContext(Dispatchers.Main) {
                                                 activity.launchCustomColorPicker()
@@ -417,12 +475,12 @@ fun TweaksScreen(
                                 isInterceptorEnabled = isEnabled
                                 sharedPrefs.edit().putBoolean("intercept_startup_apps", isEnabled).apply()
 
-                                // Launch on background thread
+                                // Use TweakService actions
                                 coroutineScope.launch(Dispatchers.IO) {
                                     if (isEnabled) {
-                                        AppInterceptor.start(context)
+                                        activity.startTweakServiceAction(TweakService.ACTION_START_INTERCEPTOR)
                                     } else {
-                                        AppInterceptor.stop()
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_INTERCEPTOR)
                                     }
                                     withContext(Dispatchers.Main) {
                                         snackbarHostState.showSnackbar(if (isEnabled) "App Interceptor Enabled." else "App Interceptor Disabled.")
@@ -629,9 +687,9 @@ fun TweaksScreen(
                                         isMinFreqExecuting = shouldStart
                                         try {
                                             if (shouldStart) {
-                                                CpuUtils.startMinFreqLock(context)
+                                                activity.startTweakServiceAction(TweakService.ACTION_START_MIN_FREQ)
                                             } else {
-                                                CpuUtils.stopMinFreqLock()
+                                                activity.startTweakServiceAction(TweakService.ACTION_STOP_MIN_FREQ)
                                             }
                                         } catch (e: Exception) {
                                             isMinFreqExecuting = !shouldStart

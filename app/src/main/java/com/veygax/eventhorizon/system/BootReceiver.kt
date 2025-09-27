@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.scottyab.rootbeer.RootBeer
-import com.veygax.eventhorizon.core.AppInterceptor
 import com.veygax.eventhorizon.ui.activities.MainActivity
 import com.veygax.eventhorizon.ui.activities.TweakCommands
 import com.veygax.eventhorizon.utils.CpuUtils
@@ -54,42 +53,35 @@ class BootReceiver : BroadcastReceiver() {
                 context.startActivity(startIntent)
             }
 
-            // --- LED Boot Logic ---
+            // --- LED Boot Logic --- (Using TweakService)
             if (customLedOnBoot) {
-                // If custom color on boot is enabled, run its persistent script
-                scope.launch {
-                    val r = sharedPrefs.getInt("led_red", 255)
-                    val g = sharedPrefs.getInt("led_green", 255)
-                    val b = sharedPrefs.getInt("led_blue", 255)
-                    val scriptFile = File(context.filesDir, "custom_led.sh")
-                    val customColorScript = """
-                        #!/system/bin/sh
-                        while true; do
-                            echo $r > /sys/class/leds/red/brightness
-                            echo $g > /sys/class/leds/green/brightness
-                            echo $b > /sys/class/leds/blue/brightness
-                            sleep 1
-                        done
-                    """.trimIndent()
-                    scriptFile.writeText(customColorScript)
-                    RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-                    RootUtils.runAsRoot("${scriptFile.absolutePath} &")
+                // Use TweakService to start custom color
+                val r = sharedPrefs.getInt("led_red", 255)
+                val g = sharedPrefs.getInt("led_green", 255)
+                val b = sharedPrefs.getInt("led_blue", 255)
+
+                val serviceIntent = Intent(context, TweakService::class.java).apply {
+                    action = TweakService.ACTION_START_CUSTOM_LED
+                    putExtra("RED", r)
+                    putExtra("GREEN", g)
+                    putExtra("BLUE", b)
                 }
+                context.startService(serviceIntent)
+                
             } else if (rainbowLedOnBoot) {
-                // Otherwise, if rainbow on boot is enabled, run its script
-                scope.launch {
-                    val scriptFile = File(context.filesDir, "rgb_led.sh")
-                    scriptFile.writeText(TweakCommands.RGB_SCRIPT)
-                    RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-                    RootUtils.runAsRoot("${scriptFile.absolutePath} &")
+                // Use TweakService to start rainbow LED
+                val serviceIntent = Intent(context, TweakService::class.java).apply {
+                    action = TweakService.ACTION_START_RGB
                 }
+                context.startService(serviceIntent)
             }
 
-            // --- CPU Lock Boot Logic ---
+            // --- CPU Lock Boot Logic (Using TweakService) ---
             if (minFreqOnBoot) {
-                scope.launch {
-                    CpuUtils.startMinFreqLock(context)
+                val serviceIntent = Intent(context, TweakService::class.java).apply {
+                    action = TweakService.ACTION_START_MIN_FREQ
                 }
+                context.startService(serviceIntent)
             }
 
             // --- Wireless ADB Boot Logic ---
@@ -100,10 +92,12 @@ class BootReceiver : BroadcastReceiver() {
                 }
             }
 
-            // --- Intercept Startup Apps Logic ---
+            // --- Intercept Startup Apps Logic (Using TweakService) ---
             if (interceptStartupApps) {
-                // The start() method handles its own coroutine, so no need to wrap it here.
-                AppInterceptor.start(context)
+                val serviceIntent = Intent(context, TweakService::class.java).apply {
+                    action = TweakService.ACTION_START_INTERCEPTOR
+                }
+                context.startService(serviceIntent)
             }
         }
     }

@@ -2,6 +2,7 @@ package com.veygax.eventhorizon.ui.activities
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -22,6 +23,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.veygax.eventhorizon.system.TweakService
 import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.launch
 import java.io.File
@@ -132,6 +134,7 @@ fun LedColorScreen() {
             Button(
                 onClick = {
                     coroutineScope.launch {
+                        // Save preferences
                         sharedPrefs.edit()
                             .putInt("led_red", red.toInt())
                             .putInt("led_green", green.toInt())
@@ -139,28 +142,16 @@ fun LedColorScreen() {
                             .putBoolean("custom_led_active", true)
                             .apply()
                         
-                        val customColorScript = """
-                            #!/system/bin/sh
+                        // Use TweakService to start the custom LED color
+                        val intent = Intent(context, TweakService::class.java).apply {
+                            action = TweakService.ACTION_START_CUSTOM_LED
+                            putExtra("RED", red.toInt())
+                            putExtra("GREEN", green.toInt())
+                            putExtra("BLUE", blue.toInt())
+                        }
+                        context.startService(intent)
 
-                            RED_LED="/sys/class/leds/red/brightness"
-                            GREEN_LED="/sys/class/leds/green/brightness"
-                            BLUE_LED="/sys/class/leds/blue/brightness"
-                            
-                            while true; do
-                                echo ${red.toInt()} > "${'$'}RED_LED"
-                                echo ${green.toInt()} > "${'$'}GREEN_LED"
-                                echo ${blue.toInt()} > "${'$'}BLUE_LED"
-                                sleep 1
-                            done
-                        """.trimIndent()
-
-                        scriptFile.writeText(customColorScript)
-                        // Kill any other running LED scripts before starting new one
-                        RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
-                        RootUtils.runAsRoot("pkill -f custom_led.sh || true")
-                        RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-                        RootUtils.runAsRoot("${scriptFile.absolutePath} &")
-                        
+                        // Set result to indicate success to TweaksActivity, which will now update its local state immediately
                         activity?.setResult(Activity.RESULT_OK)
                         activity?.finish()
                     }
