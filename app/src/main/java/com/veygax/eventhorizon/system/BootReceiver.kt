@@ -24,6 +24,7 @@ class BootReceiver : BroadcastReceiver() {
             val minFreqOnBoot = sharedPrefs.getBoolean("min_freq_on_boot", false)
             val interceptStartupApps = sharedPrefs.getBoolean("intercept_startup_apps", false)
             val wirelessAdbOnBoot = sharedPrefs.getBoolean("wireless_adb_on_boot", false)
+            val cycleWifiOnBoot = sharedPrefs.getBoolean("cycle_wifi_on_boot", false)
             val scope = CoroutineScope(Dispatchers.IO)
 
             // --- Activity Boot Logic ---
@@ -98,6 +99,16 @@ class BootReceiver : BroadcastReceiver() {
                     action = TweakService.ACTION_START_INTERCEPTOR
                 }
                 context.startService(serviceIntent)
+            }
+
+            // --- Wi-Fi Cycle on Boot Logic ---
+            if (cycleWifiOnBoot) {
+                scope.launch {
+                    RootUtils.runAsRoot("svc wifi disable")
+                    // Wait for a few seconds before turning it back on
+                    kotlinx.coroutines.delay(3000) // 3-second delay
+                    RootUtils.runAsRoot("svc wifi enable")
+                }
             }
         }
     }

@@ -172,6 +172,9 @@ fun TweaksScreen(
     // --- Intercept Startup Apps ---
     var isInterceptorEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("intercept_startup_apps", false)) }
 
+    // --- Startup Hang/Blackscreen Fix ---
+    var cycleWifiOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("cycle_wifi_on_boot", false)) }
+
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
     var isTeleportLimitDisabled by rememberSaveable { mutableStateOf(false) }
@@ -457,6 +460,22 @@ fun TweaksScreen(
                             }
                         }
                     }
+                    TweakCard(
+                        title = "Fix Double-Tap Passthrough",
+                        description = "Applies fix for broken Double-Tap Passthrough feature."
+                    ) {
+                        Button(
+                            onClick = {
+                                // Launch on background thread
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    runCommandWithWifiToggleIfNeeded(TweakCommands.FIX_PASSTHROUGH)
+                                }
+                            },
+                            enabled = isRooted
+                        ) {
+                            Text("Apply")
+                        }
+                    }
                     TweakCard("Meta Domain Blocker", "Blocks Meta/Facebook domains using a DNS filter (no root).") {
                         Column(horizontalAlignment = Alignment.End) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -545,21 +564,16 @@ fun TweaksScreen(
                             enabled = isRooted
                         )
                     }
-                    TweakCard(
-                        title = "Fix Double-Tap Passthrough",
-                        description = "Applies fix for broken Double-Tap Passthrough feature."
-                    ) {
-                        Button(
-                            onClick = {
-                                // Launch on background thread
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    runCommandWithWifiToggleIfNeeded(TweakCommands.FIX_PASSTHROUGH)
-                                }
+                    TweakCard("Cycle Wi-Fi on Boot", "Turns Wi-Fi off and on during startup to prevent system hangs.") {
+                        Switch(
+                            checked = cycleWifiOnBoot,
+                            onCheckedChange = { isEnabled ->
+                                cycleWifiOnBoot = isEnabled
+                                sharedPrefs.edit().putBoolean("cycle_wifi_on_boot", isEnabled).apply()
+                                coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Wi-Fi Cycle on Boot Enabled" else "Wi-Fi Cycle on Boot Disabled") }
                             },
                             enabled = isRooted
-                        ) {
-                            Text("Apply")
-                        }
+                        )
                     }
                 }
             }
