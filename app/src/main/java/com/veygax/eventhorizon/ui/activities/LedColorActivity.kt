@@ -53,34 +53,17 @@ class LedColorActivity : ComponentActivity() {
 @Composable
 fun LedColorScreen() {
     val coroutineScope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val activity = context as? Activity
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
-    val scriptFile = remember { File(context.filesDir, "custom_led.sh") }
 
     var red by remember { mutableStateOf(sharedPrefs.getInt("led_red", 255).toFloat()) }
     var green by remember { mutableStateOf(sharedPrefs.getInt("led_green", 255).toFloat()) }
     var blue by remember { mutableStateOf(sharedPrefs.getInt("led_blue", 255).toFloat()) }
-    var setOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("custom_led_on_boot", false)) }
 
     val currentColor = Color(red.toInt(), green.toInt(), blue.toInt())
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                setOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Custom LED Color") },
@@ -112,50 +95,28 @@ fun LedColorScreen() {
             ColorSlider(label = "Green", value = green, onValueChange = { green = it }, color = Color.Green)
             ColorSlider(label = "Blue", value = blue, onValueChange = { blue = it }, color = Color.Blue)
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Set on Boot", style = MaterialTheme.typography.bodyLarge)
-                Switch(checked = setOnBoot, onCheckedChange = { isEnabled ->
-                    setOnBoot = isEnabled
-                    val editor = sharedPrefs.edit()
-                    editor.putBoolean("custom_led_on_boot", isEnabled)
-                    if (isEnabled) {
-                        editor.putBoolean("rgb_on_boot", false)
-                        editor.putBoolean("power_led_on_boot", false)
-                    }
-                    editor.apply()
-                })
-            }
-
             Spacer(modifier = Modifier.weight(1f))
 
             Button(
                 onClick = {
-                    coroutineScope.launch {
-                        // Save preferences
-                        sharedPrefs.edit()
-                            .putInt("led_red", red.toInt())
-                            .putInt("led_green", green.toInt())
-                            .putInt("led_blue", blue.toInt())
-                            .putBoolean("custom_led_active", true)
-                            .apply()
-                        
-                        // Use TweakService to start the custom LED color
-                        val intent = Intent(context, TweakService::class.java).apply {
-                            action = TweakService.ACTION_START_CUSTOM_LED
-                            putExtra("RED", red.toInt())
-                            putExtra("GREEN", green.toInt())
-                            putExtra("BLUE", blue.toInt())
-                        }
-                        context.startService(intent)
+                    // Save preferences
+                    sharedPrefs.edit()
+                        .putInt("led_red", red.toInt())
+                        .putInt("led_green", green.toInt())
+                        .putInt("led_blue", blue.toInt())
+                        .putBoolean("custom_led_active", true)
+                        .apply()
 
-                        // Set result to indicate success to TweaksActivity, which will now update its local state immediately
-                        activity?.setResult(Activity.RESULT_OK)
-                        activity?.finish()
+                    // Create an intent with the color data to pass back
+                    val resultIntent = Intent().apply {
+                        putExtra("RED", red.toInt())
+                        putExtra("GREEN", green.toInt())
+                        putExtra("BLUE", blue.toInt())
                     }
+                    
+                    // Send the data back and finish immediately
+                    activity?.setResult(Activity.RESULT_OK, resultIntent)
+                    activity?.finish()
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {

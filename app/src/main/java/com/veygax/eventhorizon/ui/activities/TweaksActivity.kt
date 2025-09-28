@@ -60,14 +60,26 @@ class TweaksActivity : ComponentActivity() {
             startDnsService()
         }
     }
-    
+
     private val ledColorLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             // This immediately updates the UI to show the "Stop" button.
-            isRainbowLedActiveState.value = true
             isCustomLedActiveState.value = true
+            isRainbowLedActiveState.value = false
+
+            // Get the color data from the result and start the service
+            val data = result.data
+            val r = data?.getIntExtra("RED", 255) ?: 255
+            val g = data?.getIntExtra("GREEN", 255) ?: 255
+            val b = data?.getIntExtra("BLUE", 255) ?: 255
+            
+            startTweakServiceAction(TweakService.ACTION_START_CUSTOM_LED) { intent ->
+                intent.putExtra("RED", r)
+                intent.putExtra("GREEN", g)
+                intent.putExtra("BLUE", b)
+            }
         }
     }
 
@@ -89,11 +101,11 @@ class TweaksActivity : ComponentActivity() {
             startDnsService()
         }
     }
-    
+
     fun launchCustomColorPicker() {
         ledColorLauncher.launch(Intent(this, LedColorActivity::class.java))
     }
-    
+
     fun startTweakServiceAction(action: String, intentModifier: (Intent) -> Unit = {}) {
         val intent = Intent(this, TweakService::class.java).apply {
             this.action = action
@@ -150,17 +162,24 @@ fun TweaksScreen(
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
+    // --- LED Tweaks ---
     var isRainbowLedActive by activity.isRainbowLedActiveState
     var isCustomLedActive by activity.isCustomLedActiveState
     var isPowerLedActive by remember { mutableStateOf(false) }
-    var powerLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("power_led_on_boot", false)) }
-
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
+    var powerLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("power_led_on_boot", false)) }
+    var customLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("custom_led_on_boot", false)) }
+
+    // --- Domain Blocker ---
     var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
     var isBlockerEnabled by remember { mutableStateOf(false) }
+
+    // --- CPU Tweaks ---
     var minFreqOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("min_freq_on_boot", false)) }
     var isMinFreqExecuting by remember { mutableStateOf(false) }
     var isCpuPerfMode by remember { mutableStateOf(false) }
+
+    // --- Wireless ADB ---
     var isWirelessAdbEnabled by remember { mutableStateOf(false) }
     var wifiIpAddress by remember { mutableStateOf("N/A") }
     var wirelessAdbOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("wireless_adb_on_boot", false)) }
@@ -175,6 +194,7 @@ fun TweaksScreen(
     // --- Startup Hang/Blackscreen Fix ---
     var cycleWifiOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("cycle_wifi_on_boot", false)) }
 
+    // --- System UI  ---
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
     var isTeleportLimitDisabled by rememberSaveable { mutableStateOf(false) }
@@ -199,6 +219,7 @@ fun TweaksScreen(
                 }
             }
         }
+        
         // Register the receiver to listen for our specific action
         LocalBroadcastManager.getInstance(context).registerReceiver(
             broadcastReceiver, IntentFilter(TweakService.BROADCAST_TWEAKS_STOPPED)
@@ -210,14 +231,17 @@ fun TweaksScreen(
                 isBlockerEnabled = isDnsServiceRunning()
                 runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
                 powerLedOnBoot = sharedPrefs.getBoolean("power_led_on_boot", false)
+                customLedOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
                 if (isRooted) {
+                    // Re-check all states on resume
                     coroutineScope.launch(Dispatchers.IO) {
                         val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep")
                         val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep")
                         val runningPowerLed = RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep")
                         
+                        // Update UI states on the main dispatcher or compose thread
                         withContext(Dispatchers.Main) {
-                            isRainbowLedActive = runningCustom.trim().isNotEmpty() || runningRgb.trim().isNotEmpty()
+                            isRainbowLedActive = runningRgb.trim().isNotEmpty()
                             isCustomLedActive = runningCustom.trim().isNotEmpty()
                             isPowerLedActive = runningPowerLed.trim().isNotEmpty()
                             
@@ -226,6 +250,7 @@ fun TweaksScreen(
                             val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") 
                             isInterceptorEnabled = runningInterceptor.trim().isNotEmpty()
                         }
+
 
                         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                         @Suppress("DEPRECATION")
@@ -237,7 +262,7 @@ fun TweaksScreen(
         }
         lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
 
-        // Cleanup function for when the composable leaves the screen
+        // The onDispose block is crucial for cleanup when the composable leaves the screen.
         onDispose {
             LocalBroadcastManager.getInstance(context).unregisterReceiver(broadcastReceiver)
             lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
@@ -291,7 +316,7 @@ fun TweaksScreen(
                 val infinitePanelsValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled") }
 
                 // Wait for all the results and update the UI states
-                isRainbowLedActive = isCustomLedActive || runningRgbDeferred.await().trim().isNotEmpty()
+                isRainbowLedActive = runningRgbDeferred.await().trim().isNotEmpty()
                 isCustomLedActive = runningCustomDeferred.await().trim().isNotEmpty()
                 isPowerLedActive = runningPowerLedDeferred.await().trim().isNotEmpty()
                 
@@ -308,8 +333,8 @@ fun TweaksScreen(
                 isInfinitePanelsEnabled = infinitePanelsValueDeferred.await().contains(": true")
             }
             
+            // Run on a background thread to avoid blocking UI
             while (true) {
-                // Run on a background thread to avoid blocking UI
                 withContext(Dispatchers.IO) {
                     cpuMonitorInfo = CpuUtils.getCpuMonitorInfo()
                 }
@@ -339,12 +364,14 @@ fun TweaksScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                TweakSection(title = "General") {
+                TweakSection(title = "LED Tweaks") {
                     TweakCard("Rainbow LED", "Cycles notification LED through colors.") {
-                        Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp) // Reduced space
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(8.dp))
                                 Switch(
                                     checked = runOnBoot,
                                     onCheckedChange = { checked ->
@@ -352,10 +379,10 @@ fun TweaksScreen(
                                         val editor = sharedPrefs.edit()
                                         editor.putBoolean("rgb_on_boot", checked)
                                         if (checked) {
-                                            // When Rainbow on boot is enabled, disable the others
                                             editor.putBoolean("custom_led_on_boot", false)
                                             editor.putBoolean("power_led_on_boot", false)
-                                            powerLedOnBoot = false // Also update the local state
+                                            powerLedOnBoot = false
+                                            customLedOnBoot = false
                                         }
                                         editor.apply()
                                         coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Rainbow LED on Boot Enabled" else "Rainbow LED on Boot Disabled") }
@@ -363,56 +390,33 @@ fun TweaksScreen(
                                     enabled = isRooted
                                 )
                             }
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        val shouldStart = !(isRainbowLedActive && !isCustomLedActive)
-                                        if (shouldStart) {
-                                            // Start Rainbow, which turns off the other LEDs
-                                            isRainbowLedActive = true
-                                            isCustomLedActive = false
-                                            isPowerLedActive = false // <-- This fixes the UI bug
-                                            activity.startTweakServiceAction(TweakService.ACTION_START_RGB)
-                                        } else {
-                                            // Stop Rainbow
-                                            isRainbowLedActive = false
-                                            isCustomLedActive = false
-                                            isPowerLedActive = false
-                                            activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
-                                        }
-                                    },
-                                    enabled = isRooted
-                                ) {
-                                    Text(if (isRainbowLedActive && !isCustomLedActive) "Stop" else "Start")
-                                }
-
-                                Button(
-                                    onClick = {
-                                        // Launch on background thread
-                                        coroutineScope.launch(Dispatchers.IO) {
-                                            // Stop current LED script via service action before launching the picker
-                                            activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
-                                            
-                                            // UI operation should be on main thread
-                                            withContext(Dispatchers.Main) {
-                                                activity.launchCustomColorPicker()
-                                            }
-                                        }
-                                    },
-                                    enabled = isRooted
-                                ) {
-                                    Text("Custom")
-                                }
+                            Button(
+                                onClick = {
+                                    val shouldStart = !isRainbowLedActive
+                                    if (shouldStart) {
+                                        isRainbowLedActive = true
+                                        isCustomLedActive = false
+                                        isPowerLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_START_RGB)
+                                    } else {
+                                        isRainbowLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
+                                    }
+                                },
+                                enabled = isRooted,
+                                modifier = Modifier.width(90.dp)
+                            ) {
+                                Text(if (isRainbowLedActive) "Stop" else "Start")
                             }
                         }
                     }
                     TweakCard("Power Indicator LED", "Shows battery level with the LED color.") {
-                        Column(horizontalAlignment = Alignment.End) {
-                            // This Row adds the "Run on Boot" toggle with exclusivity logic
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp) // Reduced space
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(8.dp))
                                 Switch(
                                     checked = powerLedOnBoot,
                                     onCheckedChange = { isEnabled ->
@@ -420,10 +424,10 @@ fun TweaksScreen(
                                         val editor = sharedPrefs.edit()
                                         editor.putBoolean("power_led_on_boot", isEnabled)
                                         if (isEnabled) {
-                                            // When this is enabled, disable the other LED boot toggles
                                             editor.putBoolean("rgb_on_boot", false)
                                             editor.putBoolean("custom_led_on_boot", false)
-                                            runOnBoot = false // Update the local state for the Rainbow LED toggle
+                                            runOnBoot = false
+                                            customLedOnBoot = false
                                         }
                                         editor.apply()
                                         coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Power LED on Boot Enabled" else "Power LED on Boot Disabled") }
@@ -431,29 +435,79 @@ fun TweaksScreen(
                                     enabled = isRooted
                                 )
                             }
-                            Spacer(Modifier.height(8.dp))
-
                             Button(
                                 onClick = {
                                     val shouldStart = !isPowerLedActive
                                     if (shouldStart) {
-                                        // Start Power LED, turn others off in the UI
                                         isPowerLedActive = true
                                         isRainbowLedActive = false
                                         isCustomLedActive = false
                                         activity.startTweakServiceAction(TweakService.ACTION_START_POWER_LED)
                                     } else {
-                                        // Stop Power LED
                                         isPowerLedActive = false
                                         activity.startTweakServiceAction(TweakService.ACTION_STOP_POWER_LED)
                                     }
                                 },
-                                enabled = isRooted
+                                enabled = isRooted,
+                                modifier = Modifier.width(90.dp)
                             ) {
                                 Text(if (isPowerLedActive) "Stop" else "Start")
                             }
                         }
                     }
+                    TweakCard("Custom LED Color", "Set a static color for the LED.") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp) // Reduced space
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
+                                Switch(
+                                    checked = customLedOnBoot,
+                                    onCheckedChange = { isEnabled ->
+                                        customLedOnBoot = isEnabled
+                                        val editor = sharedPrefs.edit()
+                                        editor.putBoolean("custom_led_on_boot", isEnabled)
+                                        if (isEnabled) {
+                                            editor.putBoolean("rgb_on_boot", false)
+                                            editor.putBoolean("power_led_on_boot", false)
+                                            runOnBoot = false
+                                            powerLedOnBoot = false
+                                        }
+                                        editor.apply()
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Custom LED on Boot Enabled" else "Custom LED on Boot Disabled") }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    if (isCustomLedActive) {
+                                        isCustomLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
+                                    } else {
+                                        activity.launchCustomColorPicker()
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            RootUtils.runAsRoot("pkill -f rgb_led.sh; pkill -f power_led.sh")
+                                            withContext(Dispatchers.Main) {
+                                                isRainbowLedActive = false
+                                                isPowerLedActive = false
+                                            }
+                                        }
+                                    }
+                                },
+                                enabled = isRooted,
+                                modifier = Modifier.width(90.dp)
+                            ) {
+                                Text(if (isCustomLedActive) "Stop" else "Select")
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                TweakSection(title = "Utilities") {
                     TweakCard(
                         title = "Fix Double-Tap Passthrough",
                         description = "Applies fix for broken Double-Tap Passthrough feature."
@@ -471,10 +525,14 @@ fun TweaksScreen(
                         }
                     }
                     TweakCard("Meta Domain Blocker", "Blocks Meta/Facebook domains using a DNS filter (no root).") {
-                        Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        // This parent Column now measures its children and sets its width to match the widest one.
+                        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+                            // This child Column now expands to fill the parent's width.
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(8.dp))
                                 Switch(checked = blockerOnBoot, onCheckedChange = { checked ->
                                     blockerOnBoot = checked
                                     sharedPrefs.edit().putBoolean("blocker_on_boot", checked).apply()
@@ -482,9 +540,12 @@ fun TweaksScreen(
                                 })
                             }
                             Spacer(Modifier.height(8.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = "Blocker Status", style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(8.dp))
+                            // This child Column also expands, forcing it to be the same width as the one above.
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Blocker Status", style = MaterialTheme.typography.bodyMedium)
                                 Switch(checked = isBlockerEnabled, onCheckedChange = { isEnabled ->
                                     isBlockerEnabled = isEnabled
                                     if (isEnabled) {
@@ -496,11 +557,26 @@ fun TweaksScreen(
                             }
                         }
                     }
-                    TweakCard("Wireless ADB", "Enables connecting to ADB over Wi-Fi.") {
-                        Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                    TweakCard(
+                        title = "Wireless ADB",
+                        description = "Enables connecting to ADB over Wi-Fi.",
+                        extraContent = {
+                            if (isWirelessAdbEnabled) {
+                                Text(
+                                    text = "adb connect $wifiIpAddress:5555",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    ) {
+                        // This parent Column now measures its children and sets its width to match the widest one.
+                        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+                            // This child Column now expands to fill the parent's width.
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(8.dp))
                                 Switch(
                                     checked = wirelessAdbOnBoot,
                                     onCheckedChange = { checked ->
@@ -512,28 +588,28 @@ fun TweaksScreen(
                                 )
                             }
                             Spacer(Modifier.height(8.dp))
-                            if (isWirelessAdbEnabled) {
-                                Text(
-                                    text = "adb connect $wifiIpAddress:5555",
-                                    style = MaterialTheme.typography.bodyMedium
+                            // This child Column also expands, forcing it to be the same width as the one above.
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("ADB Status", style = MaterialTheme.typography.bodyMedium)
+                                Switch(
+                                    checked = isWirelessAdbEnabled,
+                                    onCheckedChange = { isEnabled ->
+                                        isWirelessAdbEnabled = isEnabled
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            val port = if (isEnabled) "5555" else "-1"
+                                            RootUtils.runAsRoot("setprop service.adb.tcp.port $port")
+                                            RootUtils.runAsRoot("stop adbd && start adbd")
+                                            withContext(Dispatchers.Main) {
+                                                snackbarHostState.showSnackbar(if (isEnabled) "Wireless ADB Enabled." else "Wireless ADB Disabled.")
+                                            }
+                                        }
+                                    },
+                                    enabled = isRooted
                                 )
                             }
-                            Switch(
-                                checked = isWirelessAdbEnabled,
-                                onCheckedChange = { isEnabled ->
-                                    isWirelessAdbEnabled = isEnabled
-                                    // Launch on background thread
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        val port = if (isEnabled) "5555" else "-1"
-                                        RootUtils.runAsRoot("setprop service.adb.tcp.port $port")
-                                        RootUtils.runAsRoot("stop adbd && start adbd")
-                                        withContext(Dispatchers.Main) {
-                                            snackbarHostState.showSnackbar(if (isEnabled) "Wireless ADB Enabled." else "Wireless ADB Disabled.")
-                                        }
-                                    }
-                                },
-                                enabled = isRooted
-                            )
                         }
                     }
                     TweakCard("Intercept App Launching", "Stops Horizon Feed and Social Connections from being started.") {
@@ -558,7 +634,7 @@ fun TweaksScreen(
                             enabled = isRooted
                         )
                     }
-                    TweakCard("Cycle Wi-Fi on Boot", "Turns Wi-Fi off and on during startup to prevent system hangs.") {
+                    TweakCard("System Hang Fix", "Turns Wi-Fi off and on during boot to prevent the system from handing in certain conditions") {
                         Switch(
                             checked = cycleWifiOnBoot,
                             onCheckedChange = { isEnabled ->
@@ -669,7 +745,7 @@ fun TweaksScreen(
                     }
                 }
             }
-            
+
             item {
                 TweakSection(title = "CPU Tweaks") {
                     // --- Centered and Compacted CPU Monitor Card ---
@@ -730,9 +806,8 @@ fun TweaksScreen(
                     }
                     TweakCard("Set Min Frequency", "Sets minimum CPU frequency to 691MHz (Instead of max)") {
                         Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(8.dp))
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
                                 Switch(
                                     checked = minFreqOnBoot,
                                     onCheckedChange = { checked ->
@@ -761,7 +836,8 @@ fun TweaksScreen(
                                         }
                                     }
                                 },
-                                enabled = isRooted
+                                enabled = isRooted,
+                                modifier = Modifier.widthIn(min = 80.dp)
                             ) { Text(if (isMinFreqExecuting) "Stop" else "Start") }
                         }
                     }
@@ -828,13 +904,26 @@ fun TweakSection(
 }
 
 @Composable
-fun TweakCard(title: String, description: String, content: @Composable () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+fun TweakCard(
+    title: String,
+    description: String,
+    extraContent: @Composable (ColumnScope.() -> Unit)? = null,
+    content: @Composable () -> Unit
+) {
+    Card(modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 4.dp)) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+            Column(modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp)) { // Reduced padding from 16.dp to 8.dp
                 Text(text = title, style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(text = description, style = MaterialTheme.typography.bodyMedium)
+                extraContent?.let {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    it()
+                }
             }
             content()
         }

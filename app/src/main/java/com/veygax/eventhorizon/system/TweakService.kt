@@ -117,7 +117,7 @@ class TweakService : Service() {
             // Process the action. The start/stop functions determine the definitive state.
             when (action) {
                 ACTION_START_RGB -> startRgbLed()
-                ACTION_STOP_RGB -> stopRgbLed()
+                ACTION_STOP_RGB -> stopAnyLed()
                 ACTION_START_CUSTOM_LED -> {
                     val r = intent.getIntExtra("RED", 255)
                     val g = intent.getIntExtra("GREEN", 255)
@@ -177,6 +177,7 @@ class TweakService : Service() {
         RootUtils.runAsRoot("${customLedScriptFile.absolutePath} &")
         isCustomLedRunning = true
         isRgbRunning = false
+        isPowerLedRunning = false
     }
     
     private suspend fun stopCustomLed() {
