@@ -184,8 +184,10 @@ fun TweaksScreen(
 
     // This effect listens for the "stop all" message from the TweakService.
     // It ensures the UI updates even when the action is triggered from the notification.
-    DisposableEffect(context) {
-        val receiver = object : BroadcastReceiver() {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, context) {
+        // --- Broadcast Receiver for "Stop All" ---
+        val broadcastReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 // When the message is received, optimistically update all UI states to "off".
                 if (intent?.action == TweakService.BROADCAST_TWEAKS_STOPPED) {
@@ -193,18 +195,52 @@ fun TweaksScreen(
                     isCustomLedActive = false
                     isMinFreqExecuting = false
                     isInterceptorEnabled = false
+                    isPowerLedActive = false
                 }
             }
         }
-        
         // Register the receiver to listen for our specific action
         LocalBroadcastManager.getInstance(context).registerReceiver(
-            receiver, IntentFilter(TweakService.BROADCAST_TWEAKS_STOPPED)
+            broadcastReceiver, IntentFilter(TweakService.BROADCAST_TWEAKS_STOPPED)
         )
 
-        // The onDispose block is crucial for cleanup when the composable leaves the screen.
+        // --- Lifecycle Observer for onResume ---
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isBlockerEnabled = isDnsServiceRunning()
+                runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
+                powerLedOnBoot = sharedPrefs.getBoolean("power_led_on_boot", false)
+                if (isRooted) {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep")
+                        val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep")
+                        val runningPowerLed = RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep")
+                        
+                        withContext(Dispatchers.Main) {
+                            isRainbowLedActive = runningCustom.trim().isNotEmpty() || runningRgb.trim().isNotEmpty()
+                            isCustomLedActive = runningCustom.trim().isNotEmpty()
+                            isPowerLedActive = runningPowerLed.trim().isNotEmpty()
+                            
+                            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
+                            isMinFreqExecuting = runningCpu.trim().isNotEmpty()
+                            val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") 
+                            isInterceptorEnabled = runningInterceptor.trim().isNotEmpty()
+                        }
+
+                        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                        @Suppress("DEPRECATION")
+                        val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
+                        wifiIpAddress = if (ip == "0.0.0.0") "Not connected to Wi-Fi" else ip
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+
+        // Cleanup function for when the composable leaves the screen
         onDispose {
-            LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver)
+            LocalBroadcastManager.getInstance(context).unregisterReceiver(broadcastReceiver)
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
         }
     }
 
@@ -255,8 +291,9 @@ fun TweaksScreen(
                 val infinitePanelsValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled") }
 
                 // Wait for all the results and update the UI states
-                isCustomLedActive = runningCustomDeferred.await().trim().isNotEmpty()
                 isRainbowLedActive = isCustomLedActive || runningRgbDeferred.await().trim().isNotEmpty()
+                isCustomLedActive = runningCustomDeferred.await().trim().isNotEmpty()
+                isPowerLedActive = runningPowerLedDeferred.await().trim().isNotEmpty()
                 
                 isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
                 isInterceptorEnabled = runningInterceptorDeferred.await().trim().isNotEmpty() 
@@ -280,48 +317,6 @@ fun TweaksScreen(
             }
         }
     }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isBlockerEnabled = isDnsServiceRunning()
-                runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
-                powerLedOnBoot = sharedPrefs.getBoolean("power_led_on_boot", false)
-                if (isRooted) {
-                    // Re-check all states on resume
-                    coroutineScope.launch(Dispatchers.IO) {
-                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep")
-                        val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep")
-                        val runningPowerLed = RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep")
-                        
-                        // Update UI states on the main dispatcher or compose thread
-                        withContext(Dispatchers.Main) {
-                            isRainbowLedActive = isCustomLedActive || runningRgb.trim().isNotEmpty()
-                            isCustomLedActive = runningCustom.trim().isNotEmpty()
-                            isCustomLedActive = runningCustom.trim().isNotEmpty()
-                            
-                            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
-                            isMinFreqExecuting = runningCpu.trim().isNotEmpty()
-                            val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") 
-                            isInterceptorEnabled = runningInterceptor.trim().isNotEmpty()
-                        }
-
-
-                        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                        @Suppress("DEPRECATION")
-                        val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
-                        wifiIpAddress = if (ip == "0.0.0.0") "Not connected to Wi-Fi" else ip
-                    }
-                }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -372,7 +367,7 @@ fun TweaksScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        val shouldStart = !isRainbowLedActive
+                                        val shouldStart = !(isRainbowLedActive && !isCustomLedActive)
                                         if (shouldStart) {
                                             // Start Rainbow, which turns off the other LEDs
                                             isRainbowLedActive = true
@@ -389,7 +384,7 @@ fun TweaksScreen(
                                     },
                                     enabled = isRooted
                                 ) {
-                                    Text(if (isRainbowLedActive) "Stop" else "Start")
+                                    Text(if (isRainbowLedActive && !isCustomLedActive) "Stop" else "Start")
                                 }
 
                                 Button(
@@ -679,7 +674,9 @@ fun TweaksScreen(
                 TweakSection(title = "CPU Tweaks") {
                     // --- Centered and Compacted CPU Monitor Card ---
                     if (isRooted) {
-                        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Card(modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally

@@ -191,6 +191,8 @@ private suspend fun startPowerLed() {
     RootUtils.runAsRoot("chmod +x ${powerLedScriptFile.absolutePath}")
     RootUtils.runAsRoot("${powerLedScriptFile.absolutePath} &")
     isPowerLedRunning = true
+    isRgbRunning = false
+    isCustomLedRunning = false
 }
 
 private suspend fun stopPowerLed() {
