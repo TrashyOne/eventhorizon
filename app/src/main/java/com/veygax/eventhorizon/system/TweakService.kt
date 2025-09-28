@@ -143,13 +143,13 @@ class TweakService : Service() {
 
     private suspend fun startRgbLed() {
         stopAnyLed()
-        if (!rgbScriptFile.exists()) {
+        // Always write the script to ensure it's present and up-to-date
             rgbScriptFile.writeText(TweakCommands.RGB_SCRIPT)
             RootUtils.runAsRoot("chmod +x ${rgbScriptFile.absolutePath}")
-        }
         RootUtils.runAsRoot("${rgbScriptFile.absolutePath} &")
         isRgbRunning = true
         isCustomLedRunning = false
+        isPowerLedRunning = false
     }
 
     private suspend fun stopRgbLed() {

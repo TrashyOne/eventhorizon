@@ -225,11 +225,10 @@ fun TweaksScreen(
 
     // Prepare the script file in the background on startup
     LaunchedEffect(Unit) {
+        // Always write/overwrite the script on launch to ensure it's up-to-date
         launch(Dispatchers.IO) {
-            if (!scriptFile.exists()) {
-                scriptFile.writeText(TweakCommands.RGB_SCRIPT)
-                RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
-            }
+            scriptFile.writeText(TweakCommands.RGB_SCRIPT)
+            RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
         }
     }
 
