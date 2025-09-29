@@ -48,6 +48,7 @@ class TweakService : Service() {
         const val ACTION_START_RGB = "com.veygax.eventhorizon.START_RGB"
         const val ACTION_STOP_RGB = "com.veygax.eventhorizon.STOP_RGB"
         const val ACTION_START_CUSTOM_LED = "com.veygax.eventhorizon.START_CUSTOM_LED"
+        const val ACTION_STOP_CUSTOM_LED = "com.veygax.eventhorizon.STOP_CUSTOM_LED"
         const val ACTION_START_MIN_FREQ = "com.veygax.eventhorizon.START_MIN_FREQ"
         const val ACTION_STOP_MIN_FREQ = "com.veygax.eventhorizon.STOP_MIN_FREQ"
         const val ACTION_START_INTERCEPTOR = "com.veygax.eventhorizon.START_INTERCEPTOR"
@@ -117,13 +118,14 @@ class TweakService : Service() {
             // Process the action. The start/stop functions determine the definitive state.
             when (action) {
                 ACTION_START_RGB -> startRgbLed()
-                ACTION_STOP_RGB -> stopAnyLed()
+                ACTION_STOP_RGB -> stopRgbLed()
                 ACTION_START_CUSTOM_LED -> {
                     val r = intent.getIntExtra("RED", 255)
                     val g = intent.getIntExtra("GREEN", 255)
                     val b = intent.getIntExtra("BLUE", 255)
                     startCustomLed(r, g, b)
                 }
+                ACTION_STOP_CUSTOM_LED -> stopCustomLed()
                 ACTION_START_POWER_LED -> startPowerLed()
                 ACTION_STOP_POWER_LED -> stopPowerLed()
                 ACTION_START_MIN_FREQ -> startMinFreq()
@@ -186,32 +188,32 @@ class TweakService : Service() {
         isCustomLedRunning = false
     }
 
-private suspend fun startPowerLed() {
-    stopAnyLed()
-    powerLedScriptFile.writeText(TweakCommands.POWER_LED_SCRIPT) // This line creates the file
-    RootUtils.runAsRoot("chmod +x ${powerLedScriptFile.absolutePath}")
-    RootUtils.runAsRoot("${powerLedScriptFile.absolutePath} &")
-    isPowerLedRunning = true
-    isRgbRunning = false
-    isCustomLedRunning = false
-}
+    private suspend fun startPowerLed() {
+        stopAnyLed()
+        powerLedScriptFile.writeText(TweakCommands.POWER_LED_SCRIPT) // This line creates the file
+        RootUtils.runAsRoot("chmod +x ${powerLedScriptFile.absolutePath}")
+        RootUtils.runAsRoot("${powerLedScriptFile.absolutePath} &")
+        isPowerLedRunning = true
+        isRgbRunning = false
+        isCustomLedRunning = false
+    }
 
-private suspend fun stopPowerLed() {
-    RootUtils.runAsRoot("pkill -f power_led.sh || true")
-    RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
-    isPowerLedRunning = false
-}
+    private suspend fun stopPowerLed() {
+        RootUtils.runAsRoot("pkill -f power_led.sh || true")
+        RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+        isPowerLedRunning = false
+    }
 
-// This function likely already exists, make sure it's up to date
-private suspend fun stopAnyLed() {
-    RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
-    RootUtils.runAsRoot("pkill -f custom_led.sh || true")
-    RootUtils.runAsRoot("pkill -f power_led.sh || true")
-    RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
-    isRgbRunning = false
-    isCustomLedRunning = false
-    isPowerLedRunning = false // Verify this line is here
-}
+    // This function likely already exists, make sure it's up to date
+    private suspend fun stopAnyLed() {
+        RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
+        RootUtils.runAsRoot("pkill -f custom_led.sh || true")
+        RootUtils.runAsRoot("pkill -f power_led.sh || true")
+        RootUtils.runAsRoot(TweakCommands.LEDS_OFF)
+        isRgbRunning = false
+        isCustomLedRunning = false
+        isPowerLedRunning = false
+    }
 
     private suspend fun startMinFreq() {
         RootUtils.runAsRoot("pkill -f ${CpuUtils.SCRIPT_NAME} || true")
@@ -241,7 +243,7 @@ private suspend fun stopAnyLed() {
     }
     
     private fun isAnyTweakRunning(): Boolean {
-        return isRgbRunning || isCustomLedRunning || isMinFreqRunning || isInterceptorRunning
+        return isRgbRunning || isCustomLedRunning || isMinFreqRunning || isInterceptorRunning || isPowerLedRunning
     }
     
     private suspend fun stopAllTweaksAndService() {
@@ -299,7 +301,7 @@ private suspend fun stopAnyLed() {
         val contentText = if (isAnyTweakRunning()) {
             "Persistent tweaks are being managed."
         } else {
-            "Persistent tweaks are being managed." 
+            "No persistent tweaks are running." 
         }
         
         val stopIntent = Intent(this, TweakService::class.java).apply {

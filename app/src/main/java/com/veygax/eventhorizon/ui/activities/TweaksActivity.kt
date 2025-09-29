@@ -54,6 +54,8 @@ class TweaksActivity : ComponentActivity() {
 
     var isRainbowLedActiveState = mutableStateOf(false)
     var isCustomLedActiveState = mutableStateOf(false)
+    var isPowerLedActiveState = mutableStateOf(false)
+    var isRootBlockerManuallyEnabledState = mutableStateOf(false) 
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -70,6 +72,7 @@ class TweaksActivity : ComponentActivity() {
             // This immediately updates the UI to show the "Stop" button.
             isCustomLedActiveState.value = true
             isRainbowLedActiveState.value = false
+            isPowerLedActiveState.value = false
 
             // Get the color data from the result and start the service
             val data = result.data
@@ -126,22 +129,24 @@ class TweaksActivity : ComponentActivity() {
         }
     }
 
-    fun enableRootBlocker() {
-        lifecycleScope.launch {
+    public suspend fun enableRootBlocker(): Boolean = withContext(Dispatchers.IO) {
+        try {
             Log.d("RootBlocker", "enableRootBlocker function called.")
             copyHostsFileFromAssets(applicationContext)
-            Log.d("RootBlocker", "copyHostsFileFromAssets has completed. Now running mount command.")
-            withContext(Dispatchers.IO) {
-                val result = RootUtils.runAsRoot(
-                    "mount -o bind /data/adb/eventhorizon/hosts /system/etc/hosts",
-                    useMountMaster = true
-                )
-                Log.d("RootBlocker", "Mount command executed. Result: $result")
-
-                val check = RootUtils.runAsRoot("mount | grep /system/etc/hosts", useMountMaster = true)
-                val isBlockerEnabled = check.isNotBlank()
-                Log.d("RootBlocker", "Mount check: $check (enabled=$isBlockerEnabled)")
-            }
+            // First, unmount any existing mount to prevent duplicates.
+            // Then, mount it and set the correct SELinux context.
+            val commands = """
+                umount -l /system/etc/hosts
+                mount -o bind /data/adb/eventhorizon/hosts /system/etc/hosts
+            """.trimIndent()
+            RootUtils.runAsRoot(commands, useMountMaster = true)
+        
+            // Check the status and return the result
+            val check = RootUtils.runAsRoot("mount | grep /system/etc/hosts", useMountMaster = true)
+            return@withContext check.isNotBlank()
+        } catch (e: Exception) {
+            Log.e("RootBlocker", "Error enabling root blocker", e)
+            return@withContext false
         }
     }
 
@@ -159,6 +164,13 @@ class TweaksActivity : ComponentActivity() {
 
             val result = RootUtils.runAsRoot(commands, useMountMaster = true)
             Log.d("RootBlocker", "Disable root blocker result:\n$result")
+
+            // After disabling, update the UI state
+            withContext(Dispatchers.Main) {
+                // It's good practice to re-check the state after the operation
+                val check = RootUtils.runAsRoot("mount | grep /system/etc/hosts", useMountMaster = true)
+                isRootBlockerManuallyEnabledState.value = check.isNotBlank()
+            }
         }
     }
 
@@ -225,7 +237,7 @@ fun TweaksScreen(
     // --- LED Tweaks ---
     var isRainbowLedActive by activity.isRainbowLedActiveState
     var isCustomLedActive by activity.isCustomLedActiveState
-    var isPowerLedActive by remember { mutableStateOf(false) }
+    var isPowerLedActive by activity.isPowerLedActiveState
     var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
     var powerLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("power_led_on_boot", false)) }
     var customLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("custom_led_on_boot", false)) }
@@ -234,7 +246,7 @@ fun TweaksScreen(
     var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
     var isBlockerEnabled by remember { mutableStateOf(false) }
     var isRootBlockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("root_blocker_on_boot", false)) }
-    var isRootBlockerManuallyEnabled by remember { mutableStateOf(false) }
+    var isRootBlockerManuallyEnabled by activity.isRootBlockerManuallyEnabledState 
 
     // --- CPU Tweaks ---
     var minFreqOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("min_freq_on_boot", false)) }
@@ -363,9 +375,9 @@ fun TweaksScreen(
                 val runningPowerLedDeferred = async { RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep") }
                 val runningCpuDeferred = async { RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep") }
                 val runningInterceptorDeferred = async { RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") }
-                val rootBlockerStatusDeferred = async { RootUtils.runAsRoot("mount | grep /system/etc/hosts | grep /data/adb/eventhorizon/hosts") }
                 val cpuGovDeferred = async { RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") }
                 val adbPortDeferred = async { RootUtils.runAsRoot("getprop service.adb.tcp.port") }
+                val rootBlockerStatusDeferred = async { RootUtils.runAsRoot("mount | grep /system/etc/hosts", useMountMaster = true) }
                 val uiStateValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state") }
                 val transitionValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled") }
                 val teleportValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere") }
@@ -379,7 +391,7 @@ fun TweaksScreen(
                 isPowerLedActive = runningPowerLedDeferred.await().trim().isNotEmpty()
                 isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
                 isInterceptorEnabled = runningInterceptorDeferred.await().trim().isNotEmpty()
-                isRootBlockerManuallyEnabled = rootBlockerStatusDeferred.await().trim().isNotEmpty()
+                isRootBlockerManuallyEnabled = rootBlockerStatusDeferred.await().trim().isNotEmpty() 
                 isCpuPerfMode = cpuGovDeferred.await().trim() == "performance"
                 isWirelessAdbEnabled = adbPortDeferred.await().trim() == "5555"
                 uiSwitchState = if (uiStateValueDeferred.await().contains(": 1")) 1 else 0
@@ -420,11 +432,150 @@ fun TweaksScreen(
             contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-           
+            item {
+                TweakSection(title = "LED Tweaks") {
+                    TweakCard("Rainbow LED", "Cycles notification LED through colors.") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp) // Reduced space
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
+                                Switch(
+                                    checked = runOnBoot,
+                                    onCheckedChange = { checked ->
+                                        runOnBoot = checked
+                                        val editor = sharedPrefs.edit()
+                                        editor.putBoolean("rgb_on_boot", checked)
+                                        if (checked) {
+                                            editor.putBoolean("custom_led_on_boot", false)
+                                            editor.putBoolean("power_led_on_boot", false)
+                                            powerLedOnBoot = false
+                                            customLedOnBoot = false
+                                        }
+                                        editor.apply()
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Rainbow LED on Boot Enabled" else "Rainbow LED on Boot Disabled") }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    val shouldStart = !isRainbowLedActive
+                                    if (shouldStart) {
+                                        isRainbowLedActive = true
+                                        isCustomLedActive = false
+                                        isPowerLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_START_RGB)
+                                    } else {
+                                        isRainbowLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
+                                    }
+                                },
+                                enabled = isRooted,
+                                modifier = Modifier.width(90.dp)
+                            ) {
+                                Text(if (isRainbowLedActive) "Stop" else "Start")
+                            }
+                        }
+                    }
+                    TweakCard("Power Indicator LED", "Shows battery level with the LED color.") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp) // Reduced space
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
+                                Switch(
+                                    checked = powerLedOnBoot,
+                                    onCheckedChange = { isEnabled ->
+                                        powerLedOnBoot = isEnabled
+                                        val editor = sharedPrefs.edit()
+                                        editor.putBoolean("power_led_on_boot", isEnabled)
+                                        if (isEnabled) {
+                                            editor.putBoolean("rgb_on_boot", false)
+                                            editor.putBoolean("custom_led_on_boot", false)
+                                            runOnBoot = false
+                                            customLedOnBoot = false
+                                        }
+                                        editor.apply()
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Power LED on Boot Enabled" else "Power LED on Boot Disabled") }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    val shouldStart = !isPowerLedActive
+                                    if (shouldStart) {
+                                        isPowerLedActive = true
+                                        isRainbowLedActive = false
+                                        isCustomLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_START_POWER_LED)
+                                    } else {
+                                        isPowerLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_POWER_LED)
+                                    }
+                                },
+                                enabled = isRooted,
+                                modifier = Modifier.width(90.dp)
+                            ) {
+                                Text(if (isPowerLedActive) "Stop" else "Start")
+                            }
+                        }
+                    }
+                    TweakCard("Custom LED Color", "Set a static color for the LED.") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp) // Reduced space
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Run on Boot", style = MaterialTheme.typography.bodyMedium)
+                                Switch(
+                                    checked = customLedOnBoot,
+                                    onCheckedChange = { isEnabled ->
+                                        customLedOnBoot = isEnabled
+                                        val editor = sharedPrefs.edit()
+                                        editor.putBoolean("custom_led_on_boot", isEnabled)
+                                        if (isEnabled) {
+                                            editor.putBoolean("rgb_on_boot", false)
+                                            editor.putBoolean("power_led_on_boot", false)
+                                            runOnBoot = false
+                                            powerLedOnBoot = false
+                                        }
+                                        editor.apply()
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Custom LED on Boot Enabled" else "Custom LED on Boot Disabled") }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    if (isCustomLedActive) {
+                                        isCustomLedActive = false
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_CUSTOM_LED)
+                                    } else {
+                                        // Update UI states immediately before launching the color picker
+                                        activity.launchCustomColorPicker()
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            RootUtils.runAsRoot("pkill -f rgb_led.sh; pkill -f power_led.sh")
+                                        }
+                                    }
+                                },
+                                enabled = isRooted,
+                                modifier = Modifier.width(90.dp)
+                            ) {
+                                Text(if (isCustomLedActive) "Stop" else "Select")
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 TweakSection(title = "Utilities") {
                     if (!isRooted) {
-                        TweakCard("Meta Domain Blocker", "Blocks Meta/Facebook domains using a DNS filter (no root).") {
+                        TweakCard("Internet Kill Switch", "Blocks internet access on boot (No Root). This will also trigger the Domain Blocker after the reboot (Root).") {
                             Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                     Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
@@ -454,7 +605,7 @@ fun TweaksScreen(
                         }
                     }
                     if (isRooted) {
-                        TweakCard("Meta Domain Blocker (Root)", "Blocks Meta domains using a root hosts file.") {
+                        TweakCard("Meta Domain Blocker", "Blocks Meta domains using bind mounting (Root)") {
                             Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                     Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
@@ -474,16 +625,28 @@ fun TweaksScreen(
                                     Text("Blocker Status", style = MaterialTheme.typography.bodyMedium)
                                     Switch(checked = isRootBlockerManuallyEnabled, onCheckedChange = { isEnabled ->
                                         isRootBlockerManuallyEnabled = isEnabled
-                                        coroutineScope.launch {
-                                            if (isEnabled) {
-                                                activity.enableRootBlocker()
-                                                snackbarHostState.showSnackbar("Root domain blocker enabled!")
-                                            } else {
-                                                activity.disableRootBlocker()
-                                                snackbarHostState.showSnackbar("Root blocker disabled. DNS cache flushed.")
+
+                                            coroutineScope.launch {
+                                                if (isEnabled) {
+                                                    // Call the suspend function and wait for the actual result
+                                                    val isSuccess = activity.enableRootBlocker()
+
+                                                    // Update the UI state based on the true result
+                                                    isRootBlockerManuallyEnabled = isSuccess
+    
+                                                    if (isSuccess) {
+                                                        snackbarHostState.showSnackbar("Root domain blocker enabled!")
+                                                    } else {
+                                                        snackbarHostState.showSnackbar("Error: Root domain blocker failed to enable.")
+                                                    }
+                                                } else {
+                                                    activity.disableRootBlocker()
+                                                    snackbarHostState.showSnackbar("Root blocker disabled. DNS cache flushed.")
+                                                }
                                             }
-                                        }
-                                    })
+                                        },
+                                        enabled = isRooted
+                                    )
                                 }
                             }
                         }

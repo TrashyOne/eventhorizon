@@ -4,12 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.scottyab.rootbeer.RootBeer
+import com.veygax.eventhorizon.system.DnsBlockerService
 import com.veygax.eventhorizon.ui.activities.MainActivity
-import com.veygax.eventhorizon.ui.activities.TweakCommands
 import com.veygax.eventhorizon.utils.CpuUtils
 import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import android.util.Log
@@ -20,12 +21,14 @@ class BootReceiver : BroadcastReceiver() {
             val sharedPrefs = context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE)
             val rootOnBoot = sharedPrefs.getBoolean("root_on_boot", false)
             val blockerOnBoot = sharedPrefs.getBoolean("blocker_on_boot", false)
-            val customLedOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
             val rainbowLedOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
+            val customLedOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
+            val powerLedOnBoot = sharedPrefs.getBoolean("power_led_on_boot", false)
             val minFreqOnBoot = sharedPrefs.getBoolean("min_freq_on_boot", false)
             val interceptStartupApps = sharedPrefs.getBoolean("intercept_startup_apps", false)
             val wirelessAdbOnBoot = sharedPrefs.getBoolean("wireless_adb_on_boot", false)
             val cycleWifiOnBoot = sharedPrefs.getBoolean("cycle_wifi_on_boot", false)
+            val isRootBlockerEnabledOnBoot = sharedPrefs.getBoolean("root_blocker_on_boot", false)
             val scope = CoroutineScope(Dispatchers.IO)
 
             // --- Activity Boot Logic ---
@@ -69,11 +72,16 @@ class BootReceiver : BroadcastReceiver() {
                     putExtra("BLUE", b)
                 }
                 context.startService(serviceIntent)
-                
+
             } else if (rainbowLedOnBoot) {
-                // Use TweakService to start rainbow LED
                 val serviceIntent = Intent(context, TweakService::class.java).apply {
                     action = TweakService.ACTION_START_RGB
+                }
+                context.startService(serviceIntent)
+
+            } else if (powerLedOnBoot) { // <-- This is the new, required block
+                val serviceIntent = Intent(context, TweakService::class.java).apply {
+                    action = TweakService.ACTION_START_POWER_LED
                 }
                 context.startService(serviceIntent)
             }
@@ -111,23 +119,66 @@ class BootReceiver : BroadcastReceiver() {
                     RootUtils.runAsRoot("svc wifi enable")
                 }
             }
-            val isRootBlockerEnabledOnBoot = sharedPrefs.getBoolean("root_blocker_on_boot", false)
-            if (isRootBlockerEnabledOnBoot) {
-                Log.i("BootReceiver", "Root blocker enabled. Starting kill switch and main activity.")
 
-                // 1. Start the kill switch to block internet (before root is available)
+            if (isRootBlockerEnabledOnBoot) {
+                Log.i("BootReceiver", "Root blocker enabled. Starting kill switch...")
+
+                // 1. Start the kill switch immediately (blocks internet until root mount is ready)
                 val serviceIntent = Intent(context, DnsBlockerService::class.java).apply {
                     action = DnsBlockerService.ACTION_START
                 }
                 context.startService(serviceIntent)
 
-                // 2. Start the main activity with a special instruction
-                val activityIntent = Intent(context, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    putExtra("apply_root_blocker_on_boot", true)
+                // 2. Switch to root blocker only if root is available
+                scope.launch {
+                    delay(5000) // let system settle a bit
+
+                    if (RootUtils.isRootAvailable()) {
+                        Log.i("BootReceiver", "Root available, copying hosts file...")
+
+                        val hostsFile = File("/data/adb/eventhorizon/hosts")
+                        if (!hostsFile.exists()) {
+                            try {
+                                Log.d("BootReceiver", "Starting to copy hosts file from assets...")
+                                val assetPath = "hosts/hosts"
+                                val inputStream = context.assets.open(assetPath)
+                                val hostsContent = inputStream.bufferedReader().use { it.readText() }
+                                val tempFile = File(context.cacheDir, "hosts_temp")
+                                tempFile.writeText(hostsContent)
+
+                                val moduleDir = "/data/adb/eventhorizon"
+                                val finalHostsPath = "$moduleDir/hosts"
+                                val commands = """
+                                    mkdir -p $moduleDir
+                                    mv ${tempFile.absolutePath} $finalHostsPath
+                                    chmod 644 $finalHostsPath
+                                """.trimIndent()
+
+                                RootUtils.runAsRoot(commands)
+                                Log.d("BootReceiver", "Hosts file successfully copied to $finalHostsPath")
+                            } catch (e: Exception) {
+                                Log.e("BootReceiver", "Error copying hosts file", e)
+                            }
+                        }
+
+                        RootUtils.runAsRoot(
+                            "umount -l /system/etc/hosts; mount -o bind /data/adb/eventhorizon/hosts /system/etc/hosts",
+                            useMountMaster = true
+                        )
+                        Log.i("BootReceiver", "Hosts file mounted.")
+
+                        // Stop VPN kill switch now that root blocker is active
+                        val stopIntent = Intent(context, DnsBlockerService::class.java).apply {
+                            action = DnsBlockerService.ACTION_STOP
+                        }
+                        context.startService(stopIntent)
+                        Log.i("BootReceiver", "Kill switch stopped. Root blocker active.")
+                    } else {
+                        Log.w("BootReceiver", "Root not available at boot. Leaving kill switch ON.")
+                        // Do nothing else — kill switch stays active
+                    }
                 }
-                context.startActivity(activityIntent)
-            }  
+            }
         }
     }
 }

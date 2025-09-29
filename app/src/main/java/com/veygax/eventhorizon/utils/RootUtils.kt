@@ -11,6 +11,7 @@ object RootUtils {
     suspend fun isRootAvailable(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+                // We use "su -c" here for a quick, non-interactive check
                 val process = Runtime.getRuntime().exec("su -c id")
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 val output = reader.readLine()
@@ -28,33 +29,46 @@ object RootUtils {
         return withContext(Dispatchers.IO) {
             val output = StringBuilder()
             try {
-                val suCmd = if (useMountMaster) {
-                    arrayOf("su", "--mount-master", "-c", command)
+                // Start an interactive 'su' shell
+                val process = if (useMountMaster) {
+                    Runtime.getRuntime().exec("su --mount-master")
                 } else {
-                    arrayOf("su", "-c", command)
+                    Runtime.getRuntime().exec("su")
                 }
-                val process = Runtime.getRuntime().exec(suCmd)
 
+                val os = DataOutputStream(process.outputStream)
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 val errorReader = BufferedReader(InputStreamReader(process.errorStream))
 
+                // Write the command to the shell
+                os.writeBytes("$command\n")
+                os.flush()
+
+                // Write the exit command to terminate the shell
+                os.writeBytes("exit\n")
+                os.flush()
+
+                // Read the standard output
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     output.append(line).append("\n")
                 }
+
+                // Read the error output
                 while (errorReader.readLine().also { line = it } != null) {
-                    output.append("ERR: ").append(line).append("\n")
+                    output.append("ERROR: ").append(line).append("\n")
                 }
 
-                val exitCode = process.waitFor()
+                process.waitFor()
+                os.close()
                 reader.close()
                 errorReader.close()
                 process.destroy()
 
-                output.append("EXIT:$exitCode\n")
             } catch (e: Exception) {
                 return@withContext "Execution failed: ${e.message}"
             }
+            // Return the captured output
             output.toString()
         }
     }

@@ -240,31 +240,6 @@ fun EventHorizonApp(
         // Automatically check for updates on startup
         isRooted = RootUtils.isRootAvailable()
         checkForUpdate(isManual = false)
-
-        // Root Domain Blocker on Boot
-        val shouldApplyOnBoot = intent?.getBooleanExtra("apply_root_blocker_on_boot", false) ?: false
-        if (shouldApplyOnBoot) {
-            Log.i("MainActivity", "Boot-up signal received. Applying root blocker...")
-
-            // Wait until root is available before proceeding.
-            while (!RootUtils.isRootAvailable()) {
-                Log.d("MainActivity", "Waiting for root...")
-                delay(1000) // Wait 1 second
-            }
-            Log.i("MainActivity", "Root is available. Mounting hosts and stopping kill switch.")
-
-            // Mount the hosts file
-            RootUtils.runAsRoot("mount -o bind /data/adb/eventhorizon/hosts /system/etc/hosts")
-
-            // Stop the kill switch service
-            val stopIntent = Intent(context, DnsBlockerService::class.java).apply {
-                action = DnsBlockerService.ACTION_STOP
-            }
-            context.stopService(stopIntent)
-
-            // Important: Remove the extra so this doesn't run again if the activity is recreated
-            intent.removeExtra("apply_root_blocker_on_boot")
-        }
     }
 
     LaunchedEffect(autoRootOnStart) {
