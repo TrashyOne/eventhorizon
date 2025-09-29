@@ -24,34 +24,34 @@ object RootUtils {
         }
     }
 
-    suspend fun runAsRoot(command: String): String {
+    suspend fun runAsRoot(command: String, useMountMaster: Boolean = false): String {
         return withContext(Dispatchers.IO) {
             val output = StringBuilder()
             try {
-                val process = Runtime.getRuntime().exec("su")
-                val os = DataOutputStream(process.outputStream)
+                val suCmd = if (useMountMaster) {
+                    arrayOf("su", "--mount-master", "-c", command)
+                } else {
+                    arrayOf("su", "-c", command)
+                }
+                val process = Runtime.getRuntime().exec(suCmd)
+
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 val errorReader = BufferedReader(InputStreamReader(process.errorStream))
-
-                os.writeBytes("$command\n")
-                os.flush()
-                os.writeBytes("exit\n")
-                os.flush()
 
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     output.append(line).append("\n")
                 }
                 while (errorReader.readLine().also { line = it } != null) {
-                    output.append("ERROR: ").append(line).append("\n")
+                    output.append("ERR: ").append(line).append("\n")
                 }
 
-                process.waitFor()
-                os.close()
+                val exitCode = process.waitFor()
                 reader.close()
                 errorReader.close()
                 process.destroy()
 
+                output.append("EXIT:$exitCode\n")
             } catch (e: Exception) {
                 return@withContext "Execution failed: ${e.message}"
             }

@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
+import android.util.Log
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -110,6 +111,23 @@ class BootReceiver : BroadcastReceiver() {
                     RootUtils.runAsRoot("svc wifi enable")
                 }
             }
+            val isRootBlockerEnabledOnBoot = sharedPrefs.getBoolean("root_blocker_on_boot", false)
+            if (isRootBlockerEnabledOnBoot) {
+                Log.i("BootReceiver", "Root blocker enabled. Starting kill switch and main activity.")
+
+                // 1. Start the kill switch to block internet (before root is available)
+                val serviceIntent = Intent(context, DnsBlockerService::class.java).apply {
+                    action = DnsBlockerService.ACTION_START
+                }
+                context.startService(serviceIntent)
+
+                // 2. Start the main activity with a special instruction
+                val activityIntent = Intent(context, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    putExtra("apply_root_blocker_on_boot", true)
+                }
+                context.startActivity(activityIntent)
+            }  
         }
     }
 }

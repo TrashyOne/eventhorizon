@@ -40,6 +40,7 @@ import androidx.lifecycle.lifecycleScope
 import com.veygax.eventhorizon.core.UpdateManager
 import com.veygax.eventhorizon.system.DnsBlockerService
 import com.veygax.eventhorizon.utils.RootUtils
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.onCompletion
@@ -49,6 +50,7 @@ import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import android.util.Log
 
 class MainActivity : ComponentActivity() {
 
@@ -92,7 +94,8 @@ class MainActivity : ComponentActivity() {
                     EventHorizonApp(
                         autoRootOnStart = intent?.getBooleanExtra("auto_root", false) ?: false,
                         autoStartDnsBlocker = intent?.getBooleanExtra("start_dns_blocker", false) ?: false,
-                        onRequestVpnPermission = { requestVpnPermission() }
+                        onRequestVpnPermission = { requestVpnPermission() },
+                        intent = intent
                     )
                 }
             }
@@ -180,7 +183,8 @@ class MainActivity : ComponentActivity() {
 fun EventHorizonApp(
     autoRootOnStart: Boolean,
     autoStartDnsBlocker: Boolean,
-    onRequestVpnPermission: () -> Unit
+    onRequestVpnPermission: () -> Unit,
+    intent: Intent?
 ) {
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
@@ -232,10 +236,35 @@ fun EventHorizonApp(
         }
     }
 
-    // Automatically check for updates on startup
     LaunchedEffect(Unit) {
+        // Automatically check for updates on startup
         isRooted = RootUtils.isRootAvailable()
         checkForUpdate(isManual = false)
+
+        // Root Domain Blocker on Boot
+        val shouldApplyOnBoot = intent?.getBooleanExtra("apply_root_blocker_on_boot", false) ?: false
+        if (shouldApplyOnBoot) {
+            Log.i("MainActivity", "Boot-up signal received. Applying root blocker...")
+
+            // Wait until root is available before proceeding.
+            while (!RootUtils.isRootAvailable()) {
+                Log.d("MainActivity", "Waiting for root...")
+                delay(1000) // Wait 1 second
+            }
+            Log.i("MainActivity", "Root is available. Mounting hosts and stopping kill switch.")
+
+            // Mount the hosts file
+            RootUtils.runAsRoot("mount -o bind /data/adb/eventhorizon/hosts /system/etc/hosts")
+
+            // Stop the kill switch service
+            val stopIntent = Intent(context, DnsBlockerService::class.java).apply {
+                action = DnsBlockerService.ACTION_STOP
+            }
+            context.stopService(stopIntent)
+
+            // Important: Remove the extra so this doesn't run again if the activity is recreated
+            intent.removeExtra("apply_root_blocker_on_boot")
+        }
     }
 
     LaunchedEffect(autoRootOnStart) {
