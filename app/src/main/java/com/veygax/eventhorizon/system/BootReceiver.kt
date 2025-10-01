@@ -168,6 +168,7 @@ class BootReceiver : BroadcastReceiver() {
                             useMountMaster = true
                         )
                         Log.i("BootReceiver", "Hosts file mounted.")
+                        sharedPrefs.edit().putBoolean("root_blocker_is_running", true).apply()
 
                         // Stop VPN kill switch now that root blocker is active
                         val stopIntent = Intent(context, DnsBlockerService::class.java).apply {

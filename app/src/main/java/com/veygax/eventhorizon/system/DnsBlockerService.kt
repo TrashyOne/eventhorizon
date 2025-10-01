@@ -16,6 +16,8 @@ class DnsBlockerService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
 
+    private val sharedPrefs by lazy { getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
+
     companion object {
         private const val TAG = "KillSwitchVpnService"
         const val ACTION_START = "com.veygax.eventhorizon.START_KILL_SWITCH"
@@ -53,11 +55,13 @@ class DnsBlockerService : VpnService() {
             stopKillSwitch()
         } else {
             Log.i(TAG, "Internet kill switch is now ACTIVE.")
+            sharedPrefs.edit().putBoolean("blocker_is_running", true).apply() 
         }
     }
 
     private fun stopKillSwitch() {
         Log.i(TAG, "Internet kill switch is being deactivated.")
+        sharedPrefs.edit().putBoolean("blocker_is_running", false).apply() 
         try {
             vpnInterface?.close()
         } catch (e: Exception) {
@@ -70,6 +74,7 @@ class DnsBlockerService : VpnService() {
 
     override fun onRevoke() {
         Log.w(TAG, "VPN revoked by system!")
+        sharedPrefs.edit().putBoolean("blocker_is_running", false).apply()
         stopKillSwitch()
         super.onRevoke()
     }

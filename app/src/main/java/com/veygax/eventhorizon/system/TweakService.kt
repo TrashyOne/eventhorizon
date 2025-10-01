@@ -24,6 +24,7 @@ class TweakService : Service() {
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private val TAG = "TweakService"
+    private val sharedPrefs by lazy { getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
 
     // App Interceptor constants moved from AppInterceptor.kt
     private val INTERCEPTOR_SCRIPT = """
@@ -67,17 +68,20 @@ class TweakService : Service() {
         const val ACTION_STOP_RGB = "com.veygax.eventhorizon.STOP_RGB"
         const val ACTION_START_CUSTOM_LED = "com.veygax.eventhorizon.START_CUSTOM_LED"
         const val ACTION_STOP_CUSTOM_LED = "com.veygax.eventhorizon.STOP_CUSTOM_LED"
+        const val ACTION_START_POWER_LED = "com.veygax.eventhorizon.START_POWER_LED"
+        const val ACTION_STOP_POWER_LED = "com.veygax.eventhorizon.STOP_POWER_LED"
         const val ACTION_START_MIN_FREQ = "com.veygax.eventhorizon.START_MIN_FREQ"
         const val ACTION_STOP_MIN_FREQ = "com.veygax.eventhorizon.STOP_MIN_FREQ"
         const val ACTION_START_INTERCEPTOR = "com.veygax.eventhorizon.START_INTERCEPTOR"
         const val ACTION_STOP_INTERCEPTOR = "com.veygax.eventhorizon.STOP_INTERCEPTOR"
         
         const val ACTION_STOP_ALL = "com.veygax.eventhorizon.STOP_ALL"
-        const val ACTION_START_POWER_LED = "com.veygax.eventhorizon.START_POWER_LED"
-        const val ACTION_STOP_POWER_LED = "com.veygax.eventhorizon.STOP_POWER_LED"    
 
         const val ACTION_START_USB_INTERCEPTOR = "com.veygax.eventhorizon.START_USB_INTERCEPTOR"
         const val ACTION_STOP_USB_INTERCEPTOR = "com.veygax.eventhorizon.STOP_USB_INTERCEPTOR"
+
+        const val ACTION_START_WIRELESS_ADB = "com.veygax.eventhorizon.action.START_WIRELESS_ADB"
+        const val ACTION_STOP_WIRELESS_ADB = "com.veygax.eventhorizon.action.STOP_WIRELESS_ADB"
         
         // This is the message the Activity will listen for.
         const val BROADCAST_TWEAKS_STOPPED = "com.veygax.eventhorizon.TWEAKS_STOPPED"
@@ -144,23 +148,59 @@ class TweakService : Service() {
         serviceScope.launch {
             // Process the action. The start/stop functions determine the definitive state.
             when (action) {
-                ACTION_START_RGB -> startRgbLed()
-                ACTION_STOP_RGB -> stopRgbLed()
+                ACTION_START_RGB -> {
+                    startRgbLed()
+                    sharedPrefs.edit().putBoolean("rgb_led_is_running", true).apply()
+                }
+                ACTION_STOP_RGB -> {
+                    stopRgbLed()
+                    sharedPrefs.edit().putBoolean("rgb_led_is_running", false).apply()
+                }
                 ACTION_START_CUSTOM_LED -> {
                     val r = intent.getIntExtra("RED", 255)
                     val g = intent.getIntExtra("GREEN", 255)
                     val b = intent.getIntExtra("BLUE", 255)
                     startCustomLed(r, g, b)
+                    sharedPrefs.edit().putBoolean("custom_led_is_running", true).apply()
                 }
-                ACTION_STOP_CUSTOM_LED -> stopCustomLed()
-                ACTION_START_POWER_LED -> startPowerLed()
-                ACTION_STOP_POWER_LED -> stopPowerLed()
-                ACTION_START_MIN_FREQ -> startMinFreq()
-                ACTION_STOP_MIN_FREQ -> stopMinFreq()
+                ACTION_STOP_CUSTOM_LED -> {
+                    stopCustomLed()
+                    sharedPrefs.edit().putBoolean("custom_led_is_running", false).apply()
+                }
+                ACTION_START_POWER_LED -> {
+                    startPowerLed()
+                    sharedPrefs.edit().putBoolean("power_led_is_running", true).apply()
+                }
+                ACTION_STOP_POWER_LED -> {
+                    stopPowerLed()
+                    sharedPrefs.edit().putBoolean("power_led_is_running", false).apply()
+                }
+                ACTION_START_MIN_FREQ -> {
+                    startMinFreq()
+                    sharedPrefs.edit().putBoolean("min_freq_is_running", true).apply()
+                }
+                ACTION_STOP_MIN_FREQ -> {
+                    stopMinFreq()
+                    sharedPrefs.edit().putBoolean("min_freq_is_running", false).apply()
+                }
                 ACTION_START_INTERCEPTOR -> startInterceptor() 
                 ACTION_STOP_INTERCEPTOR -> stopInterceptor() 
                 ACTION_START_USB_INTERCEPTOR -> startUsbInterceptor()
                 ACTION_STOP_USB_INTERCEPTOR -> stopUsbInterceptor()
+                ACTION_START_WIRELESS_ADB -> {
+                    Log.i(TAG, "Starting Wireless ADB")
+                    serviceScope.launch {
+                    RootUtils.runAsRoot("setprop service.adb.tcp.port 5555; stop adbd; start adbd")
+                    sharedPrefs.edit().putBoolean("wireless_adb_is_running", true).apply()
+            }
+        }
+                ACTION_STOP_WIRELESS_ADB -> {
+                    Log.i(TAG, "Stopping Wireless ADB")
+                    serviceScope.launch {
+                        RootUtils.runAsRoot("setprop service.adb.tcp.port -1; stop adbd; start adbd")
+                        sharedPrefs.edit().putBoolean("wireless_adb_is_running", false).apply()
+                    }
+                }
                 ACTION_STOP_ALL -> stopAllTweaksAndService()
                 else -> { /* Do nothing if action is unknown or null */ }
             }
@@ -343,11 +383,7 @@ class TweakService : Service() {
     private fun buildNotification(): Notification {
         createNotificationChannel()
         
-        val contentText = if (isAnyTweakRunning()) {
-            "Persistent tweaks are being managed."
-        } else {
-            "No persistent tweaks are running." 
-        }
+        val contentText = "Persistent tweaks are being managed."
         
         val stopIntent = Intent(this, TweakService::class.java).apply {
             action = ACTION_STOP_ALL
@@ -380,6 +416,16 @@ class TweakService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceJob.cancel()
+
+        sharedPrefs.edit().apply {
+            putBoolean("rgb_led_is_running", false)
+            putBoolean("custom_led_is_running", false)
+            putBoolean("power_led_is_running", false)
+            putBoolean("intercept_startup_apps", false)
+            putBoolean("min_freq_is_running", false)
+            apply()
+        }
+
         // Ensure scripts are killed on service destruction, just in case
         runBlocking(Dispatchers.IO) {
             RootUtils.runAsRoot("pkill -f rgb_led.sh || true")
