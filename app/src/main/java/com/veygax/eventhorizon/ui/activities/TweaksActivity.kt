@@ -268,6 +268,9 @@ fun TweaksScreen(
     // --- Startup Hang/Blackscreen Fix ---
     var cycleWifiOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("cycle_wifi_on_boot", false)) }
 
+    // --- Usb Interceptor ---
+    val usbInterceptorEnabled = remember { mutableStateOf(sharedPrefs.getBoolean("usb_interceptor_on_boot", false)) }
+
     // --- System UI  ---
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
@@ -731,6 +734,28 @@ fun TweaksScreen(
                                 cycleWifiOnBoot = isEnabled
                                 sharedPrefs.edit().putBoolean("cycle_wifi_on_boot", isEnabled).apply()
                                 coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Wi-Fi Cycle on Boot Enabled" else "Wi-Fi Cycle on Boot Disabled") }
+                            },
+                            enabled = isRooted
+                        )
+                    }
+                    TweakCard(
+                        title = "USB Notification Interceptor",
+                        description = "Listens for the Oculus MTP notification and turns on MTP mode."
+                    ) {
+                        Switch(
+                            checked = usbInterceptorEnabled.value,
+                            onCheckedChange = { isEnabled ->
+                                usbInterceptorEnabled.value = isEnabled
+                                sharedPrefs.edit().putBoolean("usb_interceptor_on_boot", isEnabled).apply()
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    if (isEnabled) {
+                                        activity.startTweakServiceAction(TweakService.ACTION_START_USB_INTERCEPTOR)
+                                        snackbarHostState.showSnackbar("USB Interceptor Enabled.")
+                                    } else {
+                                        activity.startTweakServiceAction(TweakService.ACTION_STOP_USB_INTERCEPTOR)
+                                        snackbarHostState.showSnackbar("USB Interceptor Disabled.")
+                                    }
+                                }
                             },
                             enabled = isRooted
                         )

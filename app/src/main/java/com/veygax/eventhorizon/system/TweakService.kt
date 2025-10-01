@@ -16,6 +16,8 @@ import com.veygax.eventhorizon.utils.CpuUtils
 import com.veygax.eventhorizon.utils.RootUtils
 import kotlinx.coroutines.*
 import java.io.File
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 class TweakService : Service() {
 
@@ -44,6 +46,22 @@ class TweakService : Service() {
             done
         """.trimIndent()
 
+    private var usbInterceptorProcess: Process? = null
+
+    private val USB_INTERCEPTOR_SCRIPT = """
+        #!/system/bin/sh
+
+        logcat -c
+        logcat -T 0 OculusNotificationListenerService:D *:S | while read -r line; do
+            case "${'$'}line" in
+                *"Notification posted:"*"usb_connect_enable_mtp"*)
+                    svc usb setFunctions mtp
+                    am force-stop com.oculus.notification_proxy
+                    ;;
+            esac
+        done
+    """.trimIndent()
+
     companion object {
         const val ACTION_START_RGB = "com.veygax.eventhorizon.START_RGB"
         const val ACTION_STOP_RGB = "com.veygax.eventhorizon.STOP_RGB"
@@ -53,9 +71,13 @@ class TweakService : Service() {
         const val ACTION_STOP_MIN_FREQ = "com.veygax.eventhorizon.STOP_MIN_FREQ"
         const val ACTION_START_INTERCEPTOR = "com.veygax.eventhorizon.START_INTERCEPTOR"
         const val ACTION_STOP_INTERCEPTOR = "com.veygax.eventhorizon.STOP_INTERCEPTOR"
+        
         const val ACTION_STOP_ALL = "com.veygax.eventhorizon.STOP_ALL"
         const val ACTION_START_POWER_LED = "com.veygax.eventhorizon.START_POWER_LED"
         const val ACTION_STOP_POWER_LED = "com.veygax.eventhorizon.STOP_POWER_LED"    
+
+        const val ACTION_START_USB_INTERCEPTOR = "com.veygax.eventhorizon.START_USB_INTERCEPTOR"
+        const val ACTION_STOP_USB_INTERCEPTOR = "com.veygax.eventhorizon.STOP_USB_INTERCEPTOR"
         
         // This is the message the Activity will listen for.
         const val BROADCAST_TWEAKS_STOPPED = "com.veygax.eventhorizon.TWEAKS_STOPPED"
@@ -67,16 +89,19 @@ class TweakService : Service() {
     // Internal states to track which root tweaks are running
     private var isRgbRunning: Boolean = false
     private var isCustomLedRunning: Boolean = false
+    private var isPowerLedRunning: Boolean = false
     private var isMinFreqRunning: Boolean = false
     private var isInterceptorRunning: Boolean = false
-    private var isPowerLedRunning: Boolean = false
+    private var isUsbInterceptorRunning = false
+
     
     // Files for scripts
     private lateinit var rgbScriptFile: File
     private lateinit var customLedScriptFile: File
+    private lateinit var powerLedScriptFile: File
     private lateinit var minFreqScriptFile: File
     private lateinit var interceptorScriptFile: File
-    private lateinit var powerLedScriptFile: File
+    private lateinit var usbInterceptorScriptFile: File
 
     override fun onCreate() {
         super.onCreate()
@@ -85,6 +110,8 @@ class TweakService : Service() {
         powerLedScriptFile = File(filesDir, "power_led.sh")
         minFreqScriptFile = File(filesDir, CpuUtils.SCRIPT_NAME)
         interceptorScriptFile = File(filesDir, "interceptor.sh")
+        usbInterceptorScriptFile = File(filesDir, "usb_interceptor.sh")
+        
 
         // Initialize state robustly on service creation (to catch scripts running from boot)
         runBlocking(Dispatchers.IO) {
@@ -132,6 +159,8 @@ class TweakService : Service() {
                 ACTION_STOP_MIN_FREQ -> stopMinFreq()
                 ACTION_START_INTERCEPTOR -> startInterceptor() 
                 ACTION_STOP_INTERCEPTOR -> stopInterceptor() 
+                ACTION_START_USB_INTERCEPTOR -> startUsbInterceptor()
+                ACTION_STOP_USB_INTERCEPTOR -> stopUsbInterceptor()
                 ACTION_STOP_ALL -> stopAllTweaksAndService()
                 else -> { /* Do nothing if action is unknown or null */ }
             }
@@ -241,9 +270,24 @@ class TweakService : Service() {
         RootUtils.runAsRoot("pkill -f interceptor.sh || true")
         isInterceptorRunning = false
     }
+
+    private suspend fun startUsbInterceptor() {
+        RootUtils.runAsRoot("pkill -f usb_interceptor.sh || true")
+        usbInterceptorScriptFile.writeText(USB_INTERCEPTOR_SCRIPT)
+        RootUtils.runAsRoot("chmod +x ${usbInterceptorScriptFile.absolutePath}")
+        RootUtils.runAsRoot("nohup ${usbInterceptorScriptFile.absolutePath} > /dev/null 2>&1 &")
+        isUsbInterceptorRunning = true
+        updateServiceState()
+    }
+
+    private suspend fun stopUsbInterceptor() {
+        RootUtils.runAsRoot("pkill -f usb_interceptor.sh || true")
+        isUsbInterceptorRunning = false
+        updateServiceState()
+    }
     
     private fun isAnyTweakRunning(): Boolean {
-        return isRgbRunning || isCustomLedRunning || isMinFreqRunning || isInterceptorRunning || isPowerLedRunning
+        return isRgbRunning || isCustomLedRunning || isPowerLedRunning || isMinFreqRunning || isInterceptorRunning || isUsbInterceptorRunning
     }
     
     private suspend fun stopAllTweaksAndService() {
@@ -251,6 +295,7 @@ class TweakService : Service() {
         stopAnyLed()
         stopMinFreq()
         stopInterceptor()
+        stopUsbInterceptor()
 
         // Broadcast that all tweaks have been stopped before the service dies.
         // This allows the UI in TweaksActivity to update instantly.

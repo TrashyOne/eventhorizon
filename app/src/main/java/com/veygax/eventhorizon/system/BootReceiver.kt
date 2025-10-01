@@ -29,6 +29,7 @@ class BootReceiver : BroadcastReceiver() {
             val wirelessAdbOnBoot = sharedPrefs.getBoolean("wireless_adb_on_boot", false)
             val cycleWifiOnBoot = sharedPrefs.getBoolean("cycle_wifi_on_boot", false)
             val isRootBlockerEnabledOnBoot = sharedPrefs.getBoolean("root_blocker_on_boot", false)
+            val usbInterceptorOnBoot = sharedPrefs.getBoolean("usb_interceptor_on_boot", false)
             val scope = CoroutineScope(Dispatchers.IO)
 
             // --- Activity Boot Logic ---
@@ -178,6 +179,13 @@ class BootReceiver : BroadcastReceiver() {
                         // Do nothing else — kill switch stays active
                     }
                 }
+            }
+
+            if (usbInterceptorOnBoot) {
+                val serviceIntent = Intent(context, TweakService::class.java).apply {
+                    action = TweakService.ACTION_START_USB_INTERCEPTOR
+                }
+                context.startService(serviceIntent)
             }
         }
     }
