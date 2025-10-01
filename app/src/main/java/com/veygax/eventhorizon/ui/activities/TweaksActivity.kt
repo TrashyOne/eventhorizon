@@ -271,6 +271,10 @@ fun TweaksScreen(
     // --- Usb Interceptor ---
     val usbInterceptorEnabled = remember { mutableStateOf(sharedPrefs.getBoolean("usb_interceptor_on_boot", false)) }
 
+    // --- Proxy Sensor ---
+    var proxSensorOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("prox_sensor_on_boot", false)) }
+    var isProxSensorDisabled by remember { mutableStateOf(false) }
+
     // --- System UI  ---
     var uiSwitchState by rememberSaveable { mutableStateOf(0) }
     var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
@@ -325,6 +329,7 @@ fun TweaksScreen(
                             isMinFreqExecuting = runningCpu.trim().isNotEmpty()
                             val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep")
                             isInterceptorEnabled = runningInterceptor.trim().isNotEmpty()
+                            isProxSensorDisabled = sharedPrefs.getBoolean("prox_sensor_disabled", false)
                         }
 
                         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -759,6 +764,42 @@ fun TweaksScreen(
                             },
                             enabled = isRooted
                         )
+                    }
+                    TweakCard(
+                        title = "Disable Proximity Sensor Auto-Wake",
+                        description = "Prevents the headset from waking automatically"
+                    ) {
+                        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Switch(
+                                    checked = isProxSensorDisabled,
+                                    onCheckedChange = { isEnabled ->
+                                        isProxSensorDisabled = isEnabled
+                                        sharedPrefs.edit().putBoolean("prox_sensor_disabled", isEnabled).apply()
+
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            val command = if (isEnabled) {
+                                                "am broadcast -a com.oculus.vrpowermanager.prox_close"
+                                            } else {
+                                                "am broadcast -a com.oculus.vrpowermanager.automation_disable"
+                                            }
+                                            RootUtils.runAsRoot(command)
+
+                                            withContext(Dispatchers.Main) {
+                                                snackbarHostState.showSnackbar(
+                                                    if (isEnabled) "Proximity Sensor Auto-Wake Disabled"
+                                                    else "Proximity Sensor Auto-Wake Restored"
+                                                )
+                                            }
+                                        }
+                                    },
+                                    enabled = isRooted
+                                )
+                            }
+                        }
                     }
                     TweakCard("Spoof Build Type", "Spoofs build type. Userdebug can enable features such as Dogfood or ShellDebug. This will restart your device.") {
                         val runSpoof: (String) -> Unit = { type ->

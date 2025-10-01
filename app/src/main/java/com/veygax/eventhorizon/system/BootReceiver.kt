@@ -30,6 +30,7 @@ class BootReceiver : BroadcastReceiver() {
             val cycleWifiOnBoot = sharedPrefs.getBoolean("cycle_wifi_on_boot", false)
             val isRootBlockerEnabledOnBoot = sharedPrefs.getBoolean("root_blocker_on_boot", false)
             val usbInterceptorOnBoot = sharedPrefs.getBoolean("usb_interceptor_on_boot", false)
+            val proxSensorDisabled = sharedPrefs.getBoolean("prox_sensor_disabled", false)
             val scope = CoroutineScope(Dispatchers.IO)
 
             // --- Activity Boot Logic ---
@@ -186,6 +187,15 @@ class BootReceiver : BroadcastReceiver() {
                     action = TweakService.ACTION_START_USB_INTERCEPTOR
                 }
                 context.startService(serviceIntent)
+            }
+            if (proxSensorDisabled) {
+                scope.launch {
+                    RootUtils.runAsRoot("am broadcast -a com.oculus.vrpowermanager.prox_close")
+                }
+            } else {
+                scope.launch {
+                    RootUtils.runAsRoot("am broadcast -a com.oculus.vrpowermanager.automation_disable")
+                }
             }
         }
     }
