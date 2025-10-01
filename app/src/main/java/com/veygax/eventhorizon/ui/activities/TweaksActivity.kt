@@ -760,6 +760,38 @@ fun TweaksScreen(
                             enabled = isRooted
                         )
                     }
+                    TweakCard("Spoof Build Type", "Spoofs build type. Userdebug can enable features such as Dogfood or ShellDebug. This will restart your device.") {
+                        val runSpoof: (String) -> Unit = { type ->
+                            coroutineScope.launch(Dispatchers.IO) {
+                                RootUtils.runAsRoot("magisk resetprop ro.build.type $type")
+                                withContext(Dispatchers.Main) {
+                                    snackbarHostState.showSnackbar("Build type spoofed to '$type'. Restarting Zygote...")
+                                RootUtils.runAsRoot("setprop ctl.restart zygote")
+                                }
+                            }
+                        }
+
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.width(IntrinsicSize.Max)
+                        ) {
+                            Button(
+                                onClick = { runSpoof("user") },
+                                enabled = isRooted,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("user") }
+                            Button(
+                                onClick = { runSpoof("userdebug") },
+                                enabled = isRooted,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("userdebug") }
+                            Button(
+                                onClick = { runSpoof("eng") },
+                                enabled = isRooted,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("eng") }
+                        }
+                    }
                 }
             }
 
