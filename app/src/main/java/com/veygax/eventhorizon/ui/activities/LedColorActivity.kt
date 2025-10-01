@@ -104,7 +104,7 @@ fun LedColorScreen() {
                         .putInt("led_red", red.toInt())
                         .putInt("led_green", green.toInt())
                         .putInt("led_blue", blue.toInt())
-                        .putBoolean("custom_led_active", true)
+                        .putBoolean("custom_led_is_running", true)
                         .apply()
 
                     // Create an intent with the color data to pass back

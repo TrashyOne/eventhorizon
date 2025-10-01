@@ -50,12 +50,129 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+object StatusChecks {
+    private const val PREFIX_RGB = "CHECK_RGB:"
+    private const val PREFIX_CUST_LED = "CHECK_CUST_LED:"
+    private const val PREFIX_POWER_LED = "CHECK_POWER_LED:"
+    private const val PREFIX_CPU_LOCK = "CHECK_CPU_LOCK:"
+    private const val PREFIX_INTERCEPT = "CHECK_INTERCEPT:"
+    private const val PREFIX_CPU_GOV = "CHECK_CPU_GOV:"
+    private const val PREFIX_ADB_PORT = "CHECK_ADB_PORT:"
+    private const val PREFIX_ROOT_BLOCK = "CHECK_ROOT_BLOCK:"
+    private const val PREFIX_UI_STATE = "CHECK_UI_STATE:"
+    private const val PREFIX_TRANS = "CHECK_TRANS:"
+    private const val PREFIX_TELEPORT = "CHECK_TELEPORT:"
+    private const val PREFIX_FOG = "CHECK_FOG:"
+    private const val PREFIX_PANEL_SCALE = "CHECK_PANEL_SCALE:"
+    private const val PREFIX_INF_PANELS = "CHECK_INF_PANELS:"
+
+    fun getCombinedStatusCommand(): String = """
+        # Script States (check if scripts are running)
+        echo "${PREFIX_RGB}$(ps -ef | grep rgb_led.sh | grep -v grep)"
+        echo "${PREFIX_CUST_LED}$(ps -ef | grep custom_led.sh | grep -v grep)"
+        echo "${PREFIX_POWER_LED}$(ps -ef | grep power_led.sh | grep -v grep)"
+        echo "${PREFIX_CPU_LOCK}$(ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep)"
+        echo "${PREFIX_INTERCEPT}$(ps -ef | grep interceptor.sh | grep -v grep)"
+
+        # System/Root States
+        echo "${PREFIX_ROOT_BLOCK}$(mount | grep /system/etc/hosts)"
+        echo "${PREFIX_CPU_GOV}$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo 'N/A')"
+        echo "${PREFIX_ADB_PORT}$(getprop service.adb.tcp.port 2>/dev/null || echo '-1')"
+
+        # Oculus Preference States
+        echo "${PREFIX_UI_STATE}$(oculuspreferences --getc debug_navigator_state 2>/dev/null || echo 'state: 0')"
+        echo "${PREFIX_TRANS}$(oculuspreferences --getc shell_immersive_transitions_enabled 2>/dev/null || echo 'state: true')"
+        echo "${PREFIX_TELEPORT}$(oculuspreferences --getc shell_teleport_anywhere 2>/dev/null || echo 'state: false')"
+        echo "${PREFIX_FOG}$(oculuspreferences --getc navigator_background_disabled 2>/dev/null || echo 'state: true')"
+        echo "${PREFIX_PANEL_SCALE}$(oculuspreferences --getc panel_scaling 2>/dev/null || echo 'state: false')"
+        echo "${PREFIX_INF_PANELS}$(oculuspreferences --getc debug_infinite_spatial_panels_enabled 2>/dev/null || echo 'state: false')"
+    """.trimIndent()
+
+    // Data class to hold all raw results
+    data class TweakStates(
+        var isRainbowLedActive: Boolean = false,
+        var isCustomLedActive: Boolean = false,
+        var isPowerLedActive: Boolean = false,
+        var isMinFreqExecuting: Boolean = false,
+        var isInterceptorEnabled: Boolean = false,
+        var isRootBlockerManuallyEnabled: Boolean = false,
+        var isCpuPerfMode: Boolean = false,
+        var isWirelessAdbEnabled: Boolean = false,
+        var uiSwitchState: Int = 0,
+        var isVoidTransitionEnabled: Boolean = false,
+        var isTeleportLimitDisabled: Boolean = false,
+        var isNavigatorFogEnabled: Boolean = false,
+        var isPanelScalingEnabled: Boolean = false,
+        var isInfinitePanelsEnabled: Boolean = false
+    )
+
+    // Function to run the check and return the parsed result
+    suspend fun loadAllToggleStates(): TweakStates = withContext(Dispatchers.IO) {
+        val states = TweakStates()
+        try {
+            val rawOutput = RootUtils.runAsRoot(getCombinedStatusCommand())
+
+            rawOutput.lineSequence().forEach { line ->
+                when {
+                    // Script States (running if output is not blank)
+                    line.startsWith(PREFIX_RGB) -> {
+                        states.isRainbowLedActive = line.substringAfter(PREFIX_RGB).trim().isNotEmpty()
+                    }
+                    line.startsWith(PREFIX_CUST_LED) -> {
+                        states.isCustomLedActive = line.substringAfter(PREFIX_CUST_LED).trim().isNotEmpty()
+                    }
+                    line.startsWith(PREFIX_POWER_LED) -> {
+                        states.isPowerLedActive = line.substringAfter(PREFIX_POWER_LED).trim().isNotEmpty()
+                    }
+                    line.startsWith(PREFIX_CPU_LOCK) -> {
+                        states.isMinFreqExecuting = line.substringAfter(PREFIX_CPU_LOCK).trim().isNotEmpty()
+                    }
+                    line.startsWith(PREFIX_INTERCEPT) -> {
+                        states.isInterceptorEnabled = line.substringAfter(PREFIX_INTERCEPT).trim().isNotEmpty()
+                    }
+                    line.startsWith(PREFIX_ROOT_BLOCK) -> {
+                        states.isRootBlockerManuallyEnabled = line.substringAfter(PREFIX_ROOT_BLOCK).trim().isNotEmpty()
+                    }
+                    line.startsWith(PREFIX_CPU_GOV) -> {
+                        states.isCpuPerfMode = line.substringAfter(PREFIX_CPU_GOV).trim() == "performance"
+                    }
+                    line.startsWith(PREFIX_ADB_PORT) -> {
+                        states.isWirelessAdbEnabled = line.substringAfter(PREFIX_ADB_PORT).trim() == "5555"
+                    }
+                    line.startsWith(PREFIX_UI_STATE) -> {
+                        states.uiSwitchState = if (line.contains(": 1")) 1 else 0
+                    }
+                    line.startsWith(PREFIX_TRANS) -> {
+                        states.isVoidTransitionEnabled = line.contains(": false")
+                    }
+                    line.startsWith(PREFIX_TELEPORT) -> {
+                        states.isTeleportLimitDisabled = line.contains(": true")
+                    }
+                    line.startsWith(PREFIX_FOG) -> {
+                        states.isNavigatorFogEnabled = line.contains(": false")
+                    }
+                    line.startsWith(PREFIX_PANEL_SCALE) -> {
+                        states.isPanelScalingEnabled = line.contains(": true")
+                    }
+                    line.startsWith(PREFIX_INF_PANELS) -> {
+                        states.isInfinitePanelsEnabled = line.contains(": true")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("StatusChecks", "Error running bulk root commands", e)
+        }
+        return@withContext states
+    }
+}
+
 class TweaksActivity : ComponentActivity() {
 
     var isRainbowLedActiveState = mutableStateOf(false)
     var isCustomLedActiveState = mutableStateOf(false)
     var isPowerLedActiveState = mutableStateOf(false)
-    var isRootBlockerManuallyEnabledState = mutableStateOf(false) 
+    var isRootBlockerManuallyEnabledState = mutableStateOf(false)
+    var justLaunchedCustomLed = false
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -175,6 +292,7 @@ class TweaksActivity : ComponentActivity() {
     }
 
     fun launchCustomColorPicker() {
+        justLaunchedCustomLed = true
         ledColorLauncher.launch(Intent(this, LedColorActivity::class.java))
     }
 
@@ -234,54 +352,87 @@ fun TweaksScreen(
     val sharedPrefs = remember { context.getSharedPreferences("eventhorizon_prefs", Context.MODE_PRIVATE) }
     val scriptFile = remember { File(context.filesDir, "rgb_led.sh") }
 
-    // --- LED Tweaks ---
+    // Helper to get initial state from SharedPreferences (for instant UI load)
+    fun getInitialState(key: String, defaultValue: Boolean = false): Boolean =
+        sharedPrefs.getBoolean(key, defaultValue)
+
+    // --- State Initialization (OPTIMIZED: Set toggle states based on saved 'On Boot' preference) ---
+
+    // LED Tweaks
+    val initialRgbLedOnBoot = getInitialState("rgb_on_boot")
+    val initialCustomLedOnBoot = getInitialState("custom_led_on_boot")
+    val initialPowerLedOnBoot = getInitialState("power_led_on_boot")
+    val initialRgbLedIsRunning = getInitialState("rgb_led_is_running", false)
+    val initialCustomLedIsRunning = getInitialState("custom_led_is_running", false)
+    val initialPowerLedIsRunning = getInitialState("power_led_is_running", false)
+    activity.isRainbowLedActiveState.value = initialRgbLedIsRunning
+    activity.isCustomLedActiveState.value = initialCustomLedIsRunning
+    activity.isPowerLedActiveState.value = initialPowerLedIsRunning
     var isRainbowLedActive by activity.isRainbowLedActiveState
     var isCustomLedActive by activity.isCustomLedActiveState
     var isPowerLedActive by activity.isPowerLedActiveState
-    var runOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("rgb_on_boot", false)) }
-    var powerLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("power_led_on_boot", false)) }
-    var customLedOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("custom_led_on_boot", false)) }
+    var runOnBoot by rememberSaveable { mutableStateOf(initialRgbLedOnBoot) }
+    var customLedOnBoot by rememberSaveable { mutableStateOf(initialCustomLedOnBoot) }
+    var powerLedOnBoot by rememberSaveable { mutableStateOf(initialPowerLedOnBoot) }
 
-    // --- Domain Blocker ---
-    var blockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("blocker_on_boot", false)) }
-    var isBlockerEnabled by remember { mutableStateOf(false) }
-    var isRootBlockerOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("root_blocker_on_boot", false)) }
-    var isRootBlockerManuallyEnabled by activity.isRootBlockerManuallyEnabledState 
+    // Kill Switch
+    val initialBlockerOnBoot = getInitialState("blocker_on_boot")
+    val initialBlockerIsRunning = getInitialState("blocker_is_running", initialBlockerOnBoot)
+    var blockerOnBoot by rememberSaveable { mutableStateOf(initialBlockerOnBoot) }
+    var isBlockerEnabled by remember { mutableStateOf(initialBlockerIsRunning) } 
 
-    // --- CPU Tweaks ---
-    var minFreqOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("min_freq_on_boot", false)) }
-    var isMinFreqExecuting by remember { mutableStateOf(false) }
-    var isCpuPerfMode by remember { mutableStateOf(false) }
+    // Domain Blocker
+    val initialRootBlockerOnBoot = getInitialState("root_blocker_on_boot")
+    val initialRootBlockerIsRunning = getInitialState("root_blocker_is_running", initialRootBlockerOnBoot)
+    var isRootBlockerOnBoot by rememberSaveable { mutableStateOf(initialRootBlockerOnBoot) }
+    var isRootBlockerManuallyEnabled by remember { mutableStateOf(initialRootBlockerIsRunning) }
 
-    // --- Wireless ADB ---
-    var isWirelessAdbEnabled by remember { mutableStateOf(false) }
+    // CPU Tweaks
+    val initialMinFreqState = getInitialState("min_freq_on_boot")
+    val initialMinFreqIsRunning = getInitialState("min_freq_is_running", initialMinFreqState)
+    var minFreqOnBoot by rememberSaveable { mutableStateOf(initialMinFreqState) }
+    var isMinFreqExecuting by remember { mutableStateOf(initialMinFreqIsRunning) }
+    var isCpuPerfMode by remember { mutableStateOf(false) } // Must wait for root check
+
+    // Wireless ADB
+    val initialWirelessAdbOnBootState = getInitialState("wireless_adb_on_boot")
+    val initialWirelessAdbIsRunning = getInitialState("wireless_adb_is_running", initialWirelessAdbOnBootState) 
+    var isWirelessAdbEnabled by remember { mutableStateOf(initialWirelessAdbIsRunning) }
     var wifiIpAddress by remember { mutableStateOf("N/A") }
-    var wirelessAdbOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("wireless_adb_on_boot", false)) }
+    var wirelessAdbOnBoot by rememberSaveable { mutableStateOf(initialWirelessAdbOnBootState) }
 
-    // --- CPU Monitor States ---
+    // CPU Monitor States
     var cpuMonitorInfo by remember { mutableStateOf(CpuMonitorInfo()) }
     var isFahrenheit by remember { mutableStateOf(sharedPrefs.getBoolean("temp_unit_is_fahrenheit", false)) }
 
-    // --- Intercept Startup Apps ---
-    var isInterceptorEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("intercept_startup_apps", false)) }
+    // Intercept Startup Apps
+    val initialInterceptorState = getInitialState("intercept_startup_apps")
+    var isInterceptorEnabled by remember { mutableStateOf(initialInterceptorState) }
 
-    // --- Startup Hang/Blackscreen Fix ---
-    var cycleWifiOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("cycle_wifi_on_boot", false)) }
+    // Startup Hang/Blackscreen Fix
+    var cycleWifiOnBoot by rememberSaveable { mutableStateOf(getInitialState("cycle_wifi_on_boot")) }
 
-    // --- Usb Interceptor ---
-    val usbInterceptorEnabled = remember { mutableStateOf(sharedPrefs.getBoolean("usb_interceptor_on_boot", false)) }
+    // Usb Interceptor
+    val usbInterceptorEnabled = remember { mutableStateOf(getInitialState("usb_interceptor_on_boot")) }
 
-    // --- Proxy Sensor ---
-    var proxSensorOnBoot by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("prox_sensor_on_boot", false)) }
-    var isProxSensorDisabled by remember { mutableStateOf(false) }
+    // Proximity Sensor
+    val initialProxSensorDisabledState = getInitialState("prox_sensor_disabled")
+    var proxSensorOnBoot by rememberSaveable { mutableStateOf(getInitialState("prox_sensor_on_boot")) }
+    var isProxSensorDisabled by remember { mutableStateOf(initialProxSensorDisabledState) } // Proxy sensor disabled is the state that matters
 
-    // --- System UI  ---
-    var uiSwitchState by rememberSaveable { mutableStateOf(0) }
-    var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(false) }
-    var isTeleportLimitDisabled by rememberSaveable { mutableStateOf(false) }
-    var isNavigatorFogEnabled by rememberSaveable { mutableStateOf(false) }
-    var isPanelScalingEnabled by rememberSaveable { mutableStateOf(false) }
-    var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(false) }
+    // System UI
+    val initialUiSwitchState = sharedPrefs.getInt("ui_switch_state", 0)
+    var uiSwitchState by rememberSaveable { mutableStateOf(initialUiSwitchState) }
+    val initialVoidTransitionEnabled = getInitialState("transition_void_enabled")
+    var isVoidTransitionEnabled by rememberSaveable { mutableStateOf(initialVoidTransitionEnabled) }
+    val initialTeleportLimitDisabled = getInitialState("teleport_limit_disabled")
+    var isTeleportLimitDisabled by rememberSaveable { mutableStateOf(initialTeleportLimitDisabled) }
+    val initialNavigatorFogEnabled = getInitialState("navigator_fog_enabled")
+    var isNavigatorFogEnabled by rememberSaveable { mutableStateOf(initialNavigatorFogEnabled) }
+    val initialPanelScalingEnabled = getInitialState("panel_scaling_enabled")
+    var isPanelScalingEnabled by rememberSaveable { mutableStateOf(initialPanelScalingEnabled) }
+    val initialInfinitePanelsEnabled = getInitialState("infinite_panels_enabled")
+    var isInfinitePanelsEnabled by rememberSaveable { mutableStateOf(initialInfinitePanelsEnabled) }
 
     // This effect listens for the "stop all" message from the TweakService.
     // It ensures the UI updates even when the action is triggered from the notification.
@@ -310,32 +461,42 @@ fun TweaksScreen(
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isBlockerEnabled = isDnsServiceRunning()
-                runOnBoot = sharedPrefs.getBoolean("rgb_on_boot", false)
-                powerLedOnBoot = sharedPrefs.getBoolean("power_led_on_boot", false)
-                customLedOnBoot = sharedPrefs.getBoolean("custom_led_on_boot", false)
+                runOnBoot = getInitialState("rgb_on_boot")
+                powerLedOnBoot = getInitialState("power_led_on_boot")
+                customLedOnBoot = getInitialState("custom_led_on_boot")
+                
                 if (isRooted) {
-                    // Re-check all states on resume
-                    coroutineScope.launch(Dispatchers.IO) {
-                        val runningRgb = RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep")
-                        val runningCustom = RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep")
-                        val runningPowerLed = RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep")
-
-                        // Update UI states on the main dispatcher or compose thread
+                    // Use bulk status check on resume for script and root states
+                    coroutineScope.launch {
+                        val states = StatusChecks.loadAllToggleStates() 
+                        
                         withContext(Dispatchers.Main) {
-                            isRainbowLedActive = runningRgb.trim().isNotEmpty()
-                            isCustomLedActive = runningCustom.trim().isNotEmpty()
-                            isPowerLedActive = runningPowerLed.trim().isNotEmpty()
-                            val runningCpu = RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep")
-                            isMinFreqExecuting = runningCpu.trim().isNotEmpty()
-                            val runningInterceptor = RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep")
-                            isInterceptorEnabled = runningInterceptor.trim().isNotEmpty()
+                            isRainbowLedActive = states.isRainbowLedActive
+                            if (!activity.justLaunchedCustomLed) {
+                                isCustomLedActive = states.isCustomLedActive
+                            } else {
+                                Log.d("StatusChecks", "Skipping custom LED bulk check because we just launched it")
+                                activity.justLaunchedCustomLed = false // reset after skipping once
+                            }
+                            isPowerLedActive = states.isPowerLedActive
+                            isMinFreqExecuting = states.isMinFreqExecuting
+                            isInterceptorEnabled = states.isInterceptorEnabled
+                            isRootBlockerManuallyEnabled = states.isRootBlockerManuallyEnabled // Correction for Root Blocker
+                            isCpuPerfMode = states.isCpuPerfMode
+                            isWirelessAdbEnabled = states.isWirelessAdbEnabled
+                            uiSwitchState = states.uiSwitchState
+                            isVoidTransitionEnabled = states.isVoidTransitionEnabled
+                            isTeleportLimitDisabled = states.isTeleportLimitDisabled
+                            isNavigatorFogEnabled = states.isNavigatorFogEnabled
+                            isPanelScalingEnabled = states.isPanelScalingEnabled
+                            isInfinitePanelsEnabled = states.isInfinitePanelsEnabled
                             isProxSensorDisabled = sharedPrefs.getBoolean("prox_sensor_disabled", false)
+                            
+                            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                            @Suppress("DEPRECATION")
+                            val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
+                            wifiIpAddress = if (ip == "0.0.0.0") "Not connected to Wi-Fi" else ip
                         }
-
-                        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                        @Suppress("DEPRECATION")
-                        val ip = Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
-                        wifiIpAddress = if (ip == "0.0.0.0") "Not connected to Wi-Fi" else ip
                     }
                 }
             }
@@ -367,47 +528,38 @@ fun TweaksScreen(
     LaunchedEffect(Unit) {
         // Always write/overwrite the script on launch to ensure it's up-to-date
         launch(Dispatchers.IO) {
-            scriptFile.writeText(TweakCommands.RGB_SCRIPT)
             RootUtils.runAsRoot("chmod +x ${scriptFile.absolutePath}")
         }
     }
 
+    // --- Initial Bulk Check (Runs once to correct the UI if the real state differs from saved state) ---
     LaunchedEffect(isRooted) {
         if (isRooted) {
             withContext(Dispatchers.IO) {
-                // Initial state check on startup
+                // Initial state check for non-root services
                 isBlockerEnabled = isDnsServiceRunning()
-                // Launch all checks in parallel using async for speed
-                val runningRgbDeferred = async { RootUtils.runAsRoot("ps -ef | grep rgb_led.sh | grep -v grep") }
-                val runningCustomDeferred = async { RootUtils.runAsRoot("ps -ef | grep custom_led.sh | grep -v grep") }
-                val runningPowerLedDeferred = async { RootUtils.runAsRoot("ps -ef | grep power_led.sh | grep -v grep") }
-                val runningCpuDeferred = async { RootUtils.runAsRoot("ps -ef | grep ${CpuUtils.SCRIPT_NAME} | grep -v grep") }
-                val runningInterceptorDeferred = async { RootUtils.runAsRoot("ps -ef | grep interceptor.sh | grep -v grep") }
-                val cpuGovDeferred = async { RootUtils.runAsRoot("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") }
-                val adbPortDeferred = async { RootUtils.runAsRoot("getprop service.adb.tcp.port") }
-                val rootBlockerStatusDeferred = async { RootUtils.runAsRoot("mount | grep /system/etc/hosts", useMountMaster = true) }
-                val uiStateValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_navigator_state") }
-                val transitionValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_immersive_transitions_enabled") }
-                val teleportValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc shell_teleport_anywhere") }
-                val fogValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc navigator_background_disabled") }
-                val panelScalingValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc panel_scaling") }
-                val infinitePanelsValueDeferred = async { RootUtils.runAsRoot("oculuspreferences --getc debug_infinite_spatial_panels_enabled") }
-
-                // Wait for all the results and update the UI states
-                isRainbowLedActive = runningRgbDeferred.await().trim().isNotEmpty()
-                isCustomLedActive = runningCustomDeferred.await().trim().isNotEmpty()
-                isPowerLedActive = runningPowerLedDeferred.await().trim().isNotEmpty()
-                isMinFreqExecuting = runningCpuDeferred.await().trim().isNotEmpty()
-                isInterceptorEnabled = runningInterceptorDeferred.await().trim().isNotEmpty()
-                isRootBlockerManuallyEnabled = rootBlockerStatusDeferred.await().trim().isNotEmpty() 
-                isCpuPerfMode = cpuGovDeferred.await().trim() == "performance"
-                isWirelessAdbEnabled = adbPortDeferred.await().trim() == "5555"
-                uiSwitchState = if (uiStateValueDeferred.await().contains(": 1")) 1 else 0
-                isVoidTransitionEnabled = transitionValueDeferred.await().contains(": false")
-                isTeleportLimitDisabled = teleportValueDeferred.await().contains(": true")
-                isNavigatorFogEnabled = fogValueDeferred.await().contains(": false")
-                isPanelScalingEnabled = panelScalingValueDeferred.await().contains(": true")
-                isInfinitePanelsEnabled = infinitePanelsValueDeferred.await().contains(": true")
+                
+                // Perform the fast bulk check in the background
+                val states = StatusChecks.loadAllToggleStates()
+                
+                // Update the UI states based on the combined result (Correction step)
+                // This updates the UI if the saved preference (used for instant display) was incorrect.
+                activity.isRainbowLedActiveState.value = states.isRainbowLedActive
+                activity.isCustomLedActiveState.value = states.isCustomLedActive
+                activity.isPowerLedActiveState.value = states.isPowerLedActive
+                isMinFreqExecuting = states.isMinFreqExecuting
+                isInterceptorEnabled = states.isInterceptorEnabled
+                isRootBlockerManuallyEnabled = states.isRootBlockerManuallyEnabled // Final correction
+                isCpuPerfMode = states.isCpuPerfMode
+                isWirelessAdbEnabled = states.isWirelessAdbEnabled
+                
+                // Also update the oculuspreferences states
+                uiSwitchState = states.uiSwitchState
+                isVoidTransitionEnabled = states.isVoidTransitionEnabled
+                isTeleportLimitDisabled = states.isTeleportLimitDisabled
+                isNavigatorFogEnabled = states.isNavigatorFogEnabled
+                isPanelScalingEnabled = states.isPanelScalingEnabled
+                isInfinitePanelsEnabled = states.isInfinitePanelsEnabled
             }
 
             // Run on a background thread to avoid blocking UI
@@ -474,10 +626,19 @@ fun TweaksScreen(
                                         isRainbowLedActive = true
                                         isCustomLedActive = false
                                         isPowerLedActive = false
+                                        sharedPrefs.edit().apply {
+                                            putBoolean("rgb_led_is_running", true)
+                                            putBoolean("custom_led_is_running", false)
+                                            putBoolean("power_led_is_running", false)
+                                            apply()
+                                        }
                                         activity.startTweakServiceAction(TweakService.ACTION_START_RGB)
+                                        coroutineScope.launch { snackbarHostState.showSnackbar("Rainbow LED started") }
                                     } else {
                                         isRainbowLedActive = false
+                                        sharedPrefs.edit().putBoolean("rgb_led_is_running", false).apply()
                                         activity.startTweakServiceAction(TweakService.ACTION_STOP_RGB)
+                                        coroutineScope.launch { snackbarHostState.showSnackbar("Rainbow LED stopped") }
                                     }
                                 },
                                 enabled = isRooted,
@@ -519,10 +680,19 @@ fun TweaksScreen(
                                         isPowerLedActive = true
                                         isRainbowLedActive = false
                                         isCustomLedActive = false
+                                        sharedPrefs.edit().apply {
+                                            putBoolean("power_led_is_running", true)
+                                            putBoolean("rgb_led_is_running", false)
+                                            putBoolean("custom_led_is_running", false)
+                                            apply()
+                                        }
                                         activity.startTweakServiceAction(TweakService.ACTION_START_POWER_LED)
+                                        coroutineScope.launch { snackbarHostState.showSnackbar("Power LED started") }
                                     } else {
                                         isPowerLedActive = false
+                                        sharedPrefs.edit().putBoolean("power_led_is_running", false).apply()
                                         activity.startTweakServiceAction(TweakService.ACTION_STOP_POWER_LED)
+                                        coroutineScope.launch { snackbarHostState.showSnackbar("Power LED stopped") }
                                     }
                                 },
                                 enabled = isRooted,
@@ -561,9 +731,19 @@ fun TweaksScreen(
                                 onClick = {
                                     if (isCustomLedActive) {
                                         isCustomLedActive = false
+                                        sharedPrefs.edit().putBoolean("custom_led_is_running", false).apply()
                                         activity.startTweakServiceAction(TweakService.ACTION_STOP_CUSTOM_LED)
+                                        coroutineScope.launch { snackbarHostState.showSnackbar("Custom LED stopped") }
                                     } else {
-                                        // Update UI states immediately before launching the color picker
+                                        isCustomLedActive = true
+                                        isRainbowLedActive = false
+                                        isPowerLedActive = false
+                                        sharedPrefs.edit().apply {
+                                            putBoolean("custom_led_is_running", true)
+                                            putBoolean("rgb_led_is_running", false)
+                                            putBoolean("power_led_is_running", false)
+                                            apply()
+                                        }
                                         activity.launchCustomColorPicker()
                                         coroutineScope.launch(Dispatchers.IO) {
                                             RootUtils.runAsRoot("pkill -f rgb_led.sh; pkill -f power_led.sh")
@@ -579,7 +759,6 @@ fun TweaksScreen(
                     }
                 }
             }
-
             item {
                 TweakSection(title = "Utilities") {
                     if (!isRooted) {
@@ -587,27 +766,34 @@ fun TweaksScreen(
                             Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                     Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = blockerOnBoot, onCheckedChange = { checked ->
-                                        blockerOnBoot = checked
-                                        isRootBlockerOnBoot = checked
-                                        val editor = sharedPrefs.edit()
-                                        editor.putBoolean("blocker_on_boot", checked)
-                                        editor.putBoolean("root_blocker_on_boot", checked)
-                                        editor.apply()
-                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Blocker on Boot Enabled" else "Blocker on Boot Disabled") }
-                                    })
+                                    Switch(
+                                        checked = blockerOnBoot,
+                                        onCheckedChange = { checked ->
+                                            blockerOnBoot = checked
+                                            isRootBlockerOnBoot = checked
+                                            val editor = sharedPrefs.edit()
+                                            editor.putBoolean("blocker_on_boot", checked)
+                                            editor.putBoolean("root_blocker_on_boot", checked)
+                                            editor.apply()
+                                            coroutineScope.launch { snackbarHostState.showSnackbar(if (checked) "Blocker on Boot Enabled" else "Blocker on Boot Disabled") }
+                                        }
+                                    )
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                     Text("Blocker Status", style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = isBlockerEnabled, onCheckedChange = { isEnabled ->
-                                        isBlockerEnabled = isEnabled
-                                        if (isEnabled) {
-                                            activity.requestVpnPermission()
-                                        } else {
-                                            activity.stopDnsService()
+                                    Switch(
+                                        checked = isBlockerEnabled,
+                                        onCheckedChange = { isEnabled ->
+                                            isBlockerEnabled = isEnabled
+                                            sharedPrefs.edit().putBoolean("blocker_is_running", isEnabled).apply()
+                                            if (isEnabled) {
+                                                activity.requestVpnPermission()
+                                            } else {
+                                                activity.stopDnsService()
+                                            }
                                         }
-                                    })
+                                    )
                                 }
                             }
                         }
@@ -617,31 +803,34 @@ fun TweaksScreen(
                             Column(modifier = Modifier.width(IntrinsicSize.Max)) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                     Text("Enable on Boot", style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = isRootBlockerOnBoot, onCheckedChange = { isEnabled ->
-                                        // Two-way sync: Update both states and preferences
-                                        isRootBlockerOnBoot = isEnabled
-                                        blockerOnBoot = isEnabled
-                                        val editor = sharedPrefs.edit()
-                                        editor.putBoolean("root_blocker_on_boot", isEnabled)
-                                        editor.putBoolean("blocker_on_boot", isEnabled)
-                                        editor.apply()
-                                        coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Blocker on Boot Enabled" else "Blocker on Boot Disabled") }
-                                    })
+                                    Switch(
+                                        checked = isRootBlockerOnBoot,
+                                        onCheckedChange = { isEnabled ->
+                                            isRootBlockerOnBoot = isEnabled
+                                            blockerOnBoot = isEnabled
+                                            val editor = sharedPrefs.edit()
+                                            editor.putBoolean("root_blocker_on_boot", isEnabled)
+                                            editor.putBoolean("blocker_on_boot", isEnabled)
+                                            editor.apply()
+                                            coroutineScope.launch { snackbarHostState.showSnackbar(if (isEnabled) "Blocker on Boot Enabled" else "Blocker on Boot Disabled") }
+                                        }
+                                    )
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                                     Text("Blocker Status", style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = isRootBlockerManuallyEnabled, onCheckedChange = { isEnabled ->
-                                        isRootBlockerManuallyEnabled = isEnabled
+                                    Switch(
+                                        checked = isRootBlockerManuallyEnabled,
+                                        onCheckedChange = { isEnabled ->
+                                            isRootBlockerManuallyEnabled = isEnabled
+                                            sharedPrefs.edit().putBoolean("root_blocker_is_running", isEnabled).apply()
 
                                             coroutineScope.launch {
                                                 if (isEnabled) {
                                                     // Call the suspend function and wait for the actual result
                                                     val isSuccess = activity.enableRootBlocker()
-
-                                                    // Update the UI state based on the true result
                                                     isRootBlockerManuallyEnabled = isSuccess
-    
+                                                    sharedPrefs.edit().putBoolean("root_blocker_is_running", isSuccess).apply()
                                                     if (isSuccess) {
                                                         snackbarHostState.showSnackbar("Root domain blocker enabled!")
                                                     } else {
@@ -649,6 +838,7 @@ fun TweaksScreen(
                                                     }
                                                 } else {
                                                     activity.disableRootBlocker()
+                                                    sharedPrefs.edit().putBoolean("root_blocker_is_running", false).apply()
                                                     snackbarHostState.showSnackbar("Root blocker disabled. DNS cache flushed.")
                                                 }
                                             }
@@ -697,6 +887,7 @@ fun TweaksScreen(
                                     checked = isWirelessAdbEnabled,
                                     onCheckedChange = { isEnabled ->
                                         isWirelessAdbEnabled = isEnabled
+                                        sharedPrefs.edit().putBoolean("wireless_adb_is_running", isWirelessAdbEnabled).apply()
                                         coroutineScope.launch(Dispatchers.IO) {
                                             val port = if (isEnabled) "5555" else "-1"
                                             RootUtils.runAsRoot("setprop service.adb.tcp.port $port")
@@ -717,7 +908,6 @@ fun TweaksScreen(
                             onCheckedChange = { isEnabled ->
                                 isInterceptorEnabled = isEnabled
                                 sharedPrefs.edit().putBoolean("intercept_startup_apps", isEnabled).apply()
-
                                 coroutineScope.launch(Dispatchers.IO) {
                                     if (isEnabled) {
                                         activity.startTweakServiceAction(TweakService.ACTION_START_INTERCEPTOR)
@@ -779,7 +969,6 @@ fun TweaksScreen(
                                     onCheckedChange = { isEnabled ->
                                         isProxSensorDisabled = isEnabled
                                         sharedPrefs.edit().putBoolean("prox_sensor_disabled", isEnabled).apply()
-
                                         coroutineScope.launch(Dispatchers.IO) {
                                             val command = if (isEnabled) {
                                                 "am broadcast -a com.oculus.vrpowermanager.prox_close"
@@ -844,7 +1033,9 @@ fun TweaksScreen(
                             Switch(
                                 checked = uiSwitchState == 1,
                                 onCheckedChange = { isNavigator ->
-                                    uiSwitchState = if (isNavigator) 1 else 0
+                                    val newState = if (isNavigator) 1 else 0
+                                    uiSwitchState = newState
+                                    sharedPrefs.edit().putInt("ui_switch_state", newState).apply()
                                     coroutineScope.launch(Dispatchers.IO) {
                                         val command = if (isNavigator) TweakCommands.SET_UI_NAVIGATOR else TweakCommands.SET_UI_DOCK
                                         runCommandWithWifiToggleIfNeeded(command)
@@ -861,6 +1052,8 @@ fun TweaksScreen(
                                 checked = isVoidTransitionEnabled,
                                 onCheckedChange = { isEnabled ->
                                     isVoidTransitionEnabled = isEnabled
+                                    // ADDED: Persist the state
+                                    sharedPrefs.edit().putBoolean("transition_void_enabled", isEnabled).apply()
                                     coroutineScope.launch(Dispatchers.IO) {
                                         val command = if (isEnabled) TweakCommands.SET_TRANSITION_VOID else TweakCommands.SET_TRANSITION_IMMERSIVE
                                         runCommandWithWifiToggleIfNeeded(command)
@@ -875,6 +1068,7 @@ fun TweaksScreen(
                             checked = isTeleportLimitDisabled,
                             onCheckedChange = { isEnabled ->
                                 isTeleportLimitDisabled = isEnabled
+                                sharedPrefs.edit().putBoolean("teleport_limit_disabled", isEnabled).apply()
                                 coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.DISABLE_TELEPORT_LIMIT else TweakCommands.ENABLE_TELEPORT_LIMIT
                                     RootUtils.runAsRoot(command)
@@ -891,6 +1085,7 @@ fun TweaksScreen(
                             checked = isNavigatorFogEnabled,
                             onCheckedChange = { isEnabled ->
                                 isNavigatorFogEnabled = isEnabled
+                                sharedPrefs.edit().putBoolean("navigator_fog_enabled", isEnabled).apply()
                                 coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.ENABLE_NAVIGATOR_FOG else TweakCommands.DISABLE_NAVIGATOR_FOG
                                     runCommandWithWifiToggleIfNeeded(command)
@@ -904,6 +1099,7 @@ fun TweaksScreen(
                             checked = isPanelScalingEnabled,
                             onCheckedChange = { isEnabled ->
                                 isPanelScalingEnabled = isEnabled
+                                sharedPrefs.edit().putBoolean("panel_scaling_enabled", isEnabled).apply()
                                 coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.ENABLE_PANEL_SCALING else TweakCommands.DISABLE_PANEL_SCALING
                                     runCommandWithWifiToggleIfNeeded(command)
@@ -917,6 +1113,7 @@ fun TweaksScreen(
                             checked = isInfinitePanelsEnabled,
                             onCheckedChange = { isEnabled ->
                                 isInfinitePanelsEnabled = isEnabled
+                                sharedPrefs.edit().putBoolean("infinite_panels_enabled", isEnabled).apply()
                                 coroutineScope.launch(Dispatchers.IO) {
                                     val command = if (isEnabled) TweakCommands.ENABLE_INFINITE_PANELS else TweakCommands.DISABLE_INFINITE_PANELS
                                     runCommandWithWifiToggleIfNeeded(command)
@@ -1007,11 +1204,14 @@ fun TweaksScreen(
                                         val shouldStart = !isMinFreqExecuting
                                         isMinFreqExecuting = shouldStart
                                         try {
-                                            if (shouldStart) {
+                                            if (isMinFreqExecuting) {
                                                 activity.startTweakServiceAction(TweakService.ACTION_START_MIN_FREQ)
+                                                coroutineScope.launch { snackbarHostState.showSnackbar("Min Freq lock started") }
                                             } else {
                                                 activity.startTweakServiceAction(TweakService.ACTION_STOP_MIN_FREQ)
+                                                coroutineScope.launch { snackbarHostState.showSnackbar("Min Freq lock stopped") }
                                             }
+                                            sharedPrefs.edit().putBoolean("min_freq_is_running", isMinFreqExecuting).apply()
                                         } catch (e: Exception) {
                                             isMinFreqExecuting = !shouldStart
                                         }
@@ -1019,7 +1219,9 @@ fun TweaksScreen(
                                 },
                                 enabled = isRooted,
                                 modifier = Modifier.widthIn(min = 80.dp)
-                            ) { Text(if (isMinFreqExecuting) "Stop" else "Start") }
+                            ) {
+                                Text(if (isMinFreqExecuting) "Stop" else "Start")
+                            }
                         }
                     }
                     TweakCard("CPU Governor", "Switches the CPU governor between schedutil and performance.") {
