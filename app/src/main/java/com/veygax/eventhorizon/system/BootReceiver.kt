@@ -198,6 +198,31 @@ class BootReceiver : BroadcastReceiver() {
                     RootUtils.runAsRoot("am broadcast -a com.oculus.vrpowermanager.automation_disable")
                 }
             }
+            scope.launch {
+                // Wait for boot completion
+                while (RootUtils.runAsRoot("getprop sys.boot_completed").trim() != "1") {
+                    delay(2000)
+                }
+
+                // Extra delay to avoid kernel panic
+                delay(10_000)
+
+                // Kill zombie sensorservice PIDs
+                val pidsRaw = RootUtils.runAsRoot(
+                    "dumpsys sensorservice | grep -o 'unknown_package_pid_[0-9]*' | sed 's/unknown_package_pid_//' | sort -u"
+                ).trim()
+
+                val pids = pidsRaw.split("\n").filter { it.isNotBlank() }
+
+                pids.forEach { pid ->
+                    RootUtils.runAsRoot("kill $pid")
+                }
+
+                // Restart VR services
+                RootUtils.runAsRoot("am force-stop com.oculus.vrshell")
+                delay(5000)
+                RootUtils.runAsRoot("am startservice -n com.oculus.guardian/com.oculus.vrguardianservice.VrGuardianService")
+            }
         }
     }
 }
